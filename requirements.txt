@@ -1,0 +1,30 @@
+# API / streaming
+fastapi
+uvicorn[standard]
+websockets
+python-multipart
+
+# pipeline / data
+pandas
+numpy
+pyyaml
+
+# feature extraction
+scapy
+pyshark
+
+# modeling
+torch
+torch-geometric
+
+# explainability
+shap
+captum
+
+# storage
+redis
+sqlalchemy
+psycopg2-binary
+
+# dev/test
+pytest
