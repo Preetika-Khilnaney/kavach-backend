@@ -8,7 +8,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 
-// Simplified 3D visual teaser - static version of pipeline tunnel
+// Simplified 3D visual teaser - represents network traffic flow and prediction
 function HeroVisual() {
   return (
     <div className="w-full h-[300px] md:h-[400px] rounded-2xl overflow-hidden bg-gradient-to-br from-accent-indigo/10 via-accent-teal/5 to-accent-violet/10 border border-border-default">
@@ -17,53 +17,85 @@ function HeroVisual() {
         <pointLight position={[10, 10, 10]} intensity={1} />
         <pointLight position={[-10, -10, -10]} color="#4F46E5" intensity={0.6} />
         
-        {/* Static pipeline rings */}
-        {[0, 1, 2, 3, 4].map((idx) => {
-          const z = -idx * 2.5;
-          const ringColor = idx === 2 ? '#4F46E5' : idx < 2 ? '#0EA5A0' : '#8B95A5';
+        {/* Network nodes - representing different network endpoints */}
+        {/* Center node - represents the monitored network */}
+        <mesh position={[0, 0, 0]}>
+          <sphereGeometry args={[0.4, 32, 32]} />
+          <meshStandardMaterial
+            color="#0EA5A0"
+            emissive="#0EA5A0"
+            emissiveIntensity={0.5}
+          />
+        </mesh>
+        
+        {/* Surrounding nodes at different distances - normal and threat nodes */}
+        {[
+          { pos: [-2, 1, 0], color: '#4F46E5', threat: false },
+          { pos: [2, 1, 0], color: '#4F46E5', threat: false },
+          { pos: [-2, -1, 0], color: '#4F46E5', threat: false },
+          { pos: [2, -1, 0], color: '#DC2626', threat: true }, // Threat node in red
+          { pos: [0, 2, -1], color: '#4F46E5', threat: false },
+          { pos: [0, -2, -1], color: '#D97706', threat: true }, // Warning node in amber
+        ].map((node, idx) => (
+          <group key={idx}>
+            <mesh position={node.pos as [number, number, number]}>
+              <sphereGeometry args={[0.2, 16, 16]} />
+              <meshStandardMaterial
+                color={node.color}
+                emissive={node.color}
+                emissiveIntensity={node.threat ? 0.8 : 0.3}
+              />
+            </mesh>
+            {/* Connecting lines to center - representing network traffic */}
+            <mesh position={[node.pos[0] / 2, node.pos[1] / 2, node.pos[2] / 2]}>
+              <cylinderGeometry args={[0.02, 0.02, Math.sqrt(node.pos[0]**2 + node.pos[1]**2 + node.pos[2]**2), 8]} />
+              <meshStandardMaterial 
+                color={node.threat ? node.color : '#5B6472'} 
+                emissive={node.threat ? node.color : '#5B6472'}
+                emissiveIntensity={node.threat ? 0.4 : 0.1}
+                opacity={node.threat ? 0.8 : 0.3}
+                transparent
+              />
+            </mesh>
+          </group>
+        ))}
+        
+        {/* Forecast prediction rings - representing time horizons */}
+        {[0, 1, 2].map((idx) => {
+          const radius = 1.5 + idx * 0.7;
+          const opacity = 0.15 - idx * 0.04;
           
           return (
-            <group key={idx} position={[0, 0, z]}>
-              <mesh rotation={[0, 0, 0]}>
-                <torusGeometry args={[1.5, 0.06, 16, 64]} />
-                <meshStandardMaterial
-                  color={ringColor}
-                  emissive={ringColor}
-                  emissiveIntensity={idx === 2 ? 0.6 : 0.2}
-                  roughness={0.3}
-                  metalness={0.7}
-                />
-              </mesh>
-              <mesh>
-                <circleGeometry args={[1.44, 32]} />
-                <meshBasicMaterial
-                  color={ringColor}
-                  transparent
-                  opacity={idx === 2 ? 0.15 : 0.04}
-                  side={THREE.DoubleSide}
-                />
-              </mesh>
-            </group>
+            <mesh key={`ring-${idx}`} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -idx * 0.3]}>
+              <torusGeometry args={[radius, 0.03, 16, 64]} />
+              <meshStandardMaterial
+                color="#4F46E5"
+                transparent
+                opacity={opacity}
+                emissive="#4F46E5"
+                emissiveIntensity={0.2}
+              />
+            </mesh>
           );
         })}
         
-        {/* Connecting rails */}
-        <mesh position={[1.5, 0, -5]}>
-          <cylinderGeometry args={[0.02, 0.02, 10, 8]} />
-          <meshStandardMaterial color="#5B6472" emissive="#5B6472" emissiveIntensity={0.2} />
-        </mesh>
-        <mesh position={[-1.5, 0, -5]}>
-          <cylinderGeometry args={[0.02, 0.02, 10, 8]} />
-          <meshStandardMaterial color="#5B6472" emissive="#5B6472" emissiveIntensity={0.2} />
+        {/* Pulsing threat indicator */}
+        <mesh position={[2, -1, 0.3]}>
+          <sphereGeometry args={[0.35, 32, 32]} />
+          <meshStandardMaterial
+            color="#DC2626"
+            transparent
+            opacity={0.2}
+            emissive="#DC2626"
+            emissiveIntensity={0.6}
+          />
         </mesh>
         
         <OrbitControls 
           enableZoom={false} 
           enablePan={false}
           autoRotate={true}
-          autoRotateSpeed={0.5}
-          maxPolarAngle={Math.PI / 2}
-          minPolarAngle={Math.PI / 2}
+          autoRotateSpeed={1.5}
         />
       </Canvas>
     </div>

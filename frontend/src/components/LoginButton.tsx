@@ -51,9 +51,9 @@ export function LoginButton({ onOpenAccessibility, onOpenProvenance }: LoginButt
         <div className="w-6 h-6 rounded-full bg-accent-indigo text-white flex items-center justify-center text-[10px] font-heading font-bold">
           {user?.initials || 'U'}
         </div>
-        <div className="hidden md:flex flex-col items-start">
-          <span className="text-xs font-medium leading-tight">{user?.name}</span>
-          <span className="text-[10px] text-text-tertiary leading-tight">{user?.role}</span>
+        <div className="hidden md:flex flex-col items-start min-w-0">
+          <span className="text-xs font-medium leading-tight truncate max-w-[120px]">{user?.name}</span>
+          <span className="text-[10px] text-text-tertiary leading-tight whitespace-nowrap">{user?.role}</span>
         </div>
       </button>
 

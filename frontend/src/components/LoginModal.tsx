@@ -65,13 +65,13 @@ export function LoginModal({ isOpen, onClose }: LoginModalProps) {
         aria-hidden="true"
       />
 
-      {/* Modal */}
+      {/* Modal - Fixed positioning with proper centering */}
       <div
         ref={containerRef}
         role="dialog"
         aria-labelledby="login-modal-title"
         aria-modal="true"
-        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-surface rounded-2xl border border-border-default shadow-panel w-full max-w-md"
+        className="fixed inset-4 sm:top-[10%] sm:left-1/2 sm:-translate-x-1/2 sm:inset-auto z-50 bg-surface rounded-2xl border border-border-default shadow-panel w-full sm:max-w-md max-h-[90vh] overflow-y-auto"
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border-default">
