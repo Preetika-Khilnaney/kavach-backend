@@ -1,0 +1,64 @@
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
+
+# ── Virtual environments ───────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+ENV/
+
+# ── Environment variables ──────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Data files (too large / sensitive for git) ─────────────
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# ── Model weights (download from Kaggle separately) ────────
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.h5
+*.bin
+
+# ── Jupyter / Kaggle notebooks output ─────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── IDE ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── OS ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ───────────────────────────────────────────────────
+*.log
+logs/
+
+# ── pytest / coverage ──────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── uvicorn / FastAPI ──────────────────────────────────────
+*.pid

@@ -1,0 +1,43 @@
+data:
+  cic_ids_2018_dir: "data/raw/cic_ids_2018"
+  ctu_13_dir: "data/raw/ctu_13"
+  processed_dir: "data/processed"
+
+windowing:
+  window_seconds: 5
+  stride_seconds: 5
+
+features:
+  flow_level:
+    - src_ip
+    - dst_ip
+    - src_port
+    - dst_port
+    - protocol
+    - tcp_flags
+    - bytes
+    - packets
+    - duration
+    - iat_mean
+    - iat_var
+    - iat_max
+  packet_level:
+    - ttl_variance
+    - tcp_window_size
+    - fragment_flag
+    - payload_size
+    - retransmit_count
+
+model:
+  embedding_dim: 128
+  predictor_hidden_dim: 256
+  ema_momentum: 0.996
+  vicreg:
+    sim_coeff: 25.0
+    std_coeff: 25.0
+    cov_coeff: 1.0
+  rollout_steps: 5
+
+api:
+  host: "0.0.0.0"
+  port: 8000

@@ -1,0 +1,24 @@
+# API / streaming
+fastapi
+uvicorn[standard]
+websockets
+python-multipart
+
+# pipeline / data
+pandas
+numpy
+pyyaml
+scikit-learn
+
+# feature extraction
+scapy
+
+# modeling
+torch
+torch-geometric
+
+# explainability
+captum
+
+# dev/test
+pytest
