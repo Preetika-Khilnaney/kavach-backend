@@ -62,12 +62,14 @@ export function Ingest() {
     try {
       const { jobId } = await uploadFile(file);
 
-      // Poll progress simulation
+      // Poll the real backend job (src/api/main.py -> GET /jobs/{id}/progress).
+      // Only ingestion is real so far; percent still advances smoothly
+      // because the placeholder stages after it complete instantly.
       let progress = 10;
       let stage = 0;
       const interval = setInterval(async () => {
         const p = await getJobProgress(jobId);
-        progress = Math.min(100, progress + 18);
+        progress = Math.max(progress, p.percent);
         stage = Math.min(PIPELINE_INGEST_STAGES.length - 1, Math.floor((progress / 100) * PIPELINE_INGEST_STAGES.length));
 
         setProgressPercent(progress);

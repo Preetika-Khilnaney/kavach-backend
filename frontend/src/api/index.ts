@@ -6,7 +6,16 @@
  *   1. Setting BASE_URL
  *   2. Replacing the body of each function with a fetch()
  *   3. Deleting the mock-data import
+ *
+ * Only the ingestion pipeline is implemented on the backend so far
+ * (upload -> parse CSV/PCAP -> stream progress), so only `uploadFile` and
+ * `getJobProgress` below hit the real API. Everything else (flows, kill
+ * chain, network graph, forecasts, benchmarks, ...) stays mocked until
+ * feature extraction / the world model / scoring are built — see
+ * kavach-backend's README for the current build order.
  */
+
+const BASE_URL = 'http://localhost:8000';
 
 import type {
   Flow,
@@ -184,30 +193,17 @@ export async function submitFeedback(fb: FeedbackSubmission): Promise<{ ok: bool
   return { ok: true };
 }
 
-export async function uploadFile(_file: File): Promise<{ jobId: string }> {
-  await delay(300);
-  return { jobId: 'job-' + Date.now() };
+export async function uploadFile(file: File): Promise<{ jobId: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE_URL}/ingest/upload`, { method: 'POST', body: form });
+  if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  return { jobId: data.job_id };
 }
 
-// Simulated progressive stages
-const jobStages = ['Parsing', 'Feature Extraction', 'State Building', 'Forecasting', 'Mapping', 'Complete'];
-const jobProgress = new Map<string, { call: number }>();
-
 export async function getJobProgress(jobId: string): Promise<JobProgress> {
-  await delay(200);
-  if (!jobProgress.has(jobId)) {
-    jobProgress.set(jobId, { call: 0 });
-  }
-  const state = jobProgress.get(jobId)!;
-  state.call++;
-
-  const stageIdx = Math.min(Math.floor(state.call / 3), jobStages.length - 1);
-  const withinStage = ((state.call % 3) + 1) / 3;
-  const isComplete = stageIdx >= jobStages.length - 1;
-
-  return {
-    stage: jobStages[stageIdx],
-    percent: isComplete ? 100 : Math.round((stageIdx / jobStages.length) * 100 + withinStage * (100 / jobStages.length)),
-    complete: isComplete,
-  };
+  const res = await fetch(`${BASE_URL}/jobs/${jobId}/progress`);
+  if (!res.ok) throw new Error(`Job progress fetch failed: ${res.status} ${res.statusText}`);
+  return res.json();
 }
