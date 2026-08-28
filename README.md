@@ -10,11 +10,18 @@ graph state -> NetJEPA world model -> scoring/stage mapping -> explainability ->
 - `src/ingestion/flow_parser.py` — streams and normalizes the CIC-IDS-2017 "MachineLearningCVE"
   flow CSVs (see Datasets below). Read the module docstring: this dataset release has no
   src/dst IP, no protocol column, and no real per-flow timestamp, so those are synthesized/left
-  NaN — pair with the raw PCAPs when you need real host identity or wall-clock time.
+  NaN. For Monday and Wednesday specifically, pass `pcap_path=` (or `pcap_dir=` to
+  `load_flow_dir`) to anchor the synthesized timestamp to that day's real PCAP start time
+  instead of a generic 9am guess — still not a real per-flow timestamp, just a better anchor.
+  Tuesday/Thursday/Friday have no matching PCAP, so they stay on the guess.
 - `src/ingestion/packet_parser.py` — streams PCAP/PCAPNG captures packet-by-packet via Scapy
   (never loads a file into memory, so it's safe against the 10-13 GB captures in this project).
   Extracts TTL, TCP window size, fragment flags, payload size, a retransmission flag (same
   5-tuple + seq number seen twice), and a sliding-window port-scan signature.
+- `src/features/extract.py` — windows flow_parser/packet_parser output into one aggregate
+  feature vector per `windowing.window_seconds` (tumbling windows), z-score normalized. Flow
+  and packet records are windowed independently and merged on `window_start` only if you pass
+  both — read the module docstring before doing that with two unrelated captures.
 - `src/orchestrator/pipeline.py` — the ingestion stage now runs the real parsers above and
   streams one `stage:ingestion` event per batch (`in_progress`) plus a final `complete` event
   with totals, matching the event schema in the architecture doc. Every stage after ingestion
@@ -29,8 +36,6 @@ graph state -> NetJEPA world model -> scoring/stage mapping -> explainability ->
   encoder once the graph pipeline is ready (see TODOs inline).
 
 **Stubbed (next up):**
-- `src/features/extract.py` — windowed flow+packet feature matrix construction (join the
-  normalized records from flow_parser/packet_parser into fixed time windows).
 - `src/graph/state_builder.py` — builds G_t = (V_t, E_t) from a feature window.
 - `src/scoring/infiltration.py`, `src/scoring/attack_stage.py` — rollout scoring, MITRE mapping.
 - `src/explainability/shap_explainer.py` — SHAP/Captum-based attribution.
@@ -90,8 +95,8 @@ is done.
 
 1. ~~`src/ingestion/flow_parser.py` + `src/ingestion/packet_parser.py`, wired into the
    orchestrator's ingestion stage.~~ Done — see `tests/test_ingestion.py`, `tests/test_pipeline.py`.
-2. `src/features/extract.py` — windowed feature matrix, joining flow_parser + packet_parser
-   output on the `timestamp`/`window_seconds` config.
+2. ~~`src/features/extract.py` — windowed feature matrix.~~ Done — see `tests/test_extract.py`.
+   Not yet wired into the orchestrator's `feature_extraction` stage (still placeholder there).
 3. `src/graph/state_builder.py` — turn a window into a `(V_t, E_t)` graph snapshot.
 4. Wire real data into `NetJEPA.forward` in place of the placeholder tensors, verify the
    VICReg loss decreases over a few epochs without collapsing (check embedding std stays > 0).

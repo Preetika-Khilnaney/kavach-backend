@@ -3,11 +3,22 @@
 The ingestion stage is wired to the real parsers (src.ingestion.flow_parser
 for MachineLearningCVE CSVs, src.ingestion.packet_parser for PCAP/PCAPNG)
 and streams a stage:ingestion event per batch, per the architecture doc.
-Every stage after ingestion still emits placeholder events with fake
-payloads so the API and frontend can be built/tested before the rest of
-the pipeline (feature extraction -> world model -> scoring -> explain) is
-implemented. Swap each remaining placeholder block for its real stage call
-(see TODOs) without changing the event schema or the API layer.
+The feature_extraction stage is wired to src.features.extract: once
+ingestion finishes, the ingested records are windowed and one
+stage:feature_extraction event is emitted per window (not one giant final
+vector — see extract.py's iter_feature_windows).
+
+Simplification worth knowing: this waits for ingestion to fully finish
+before windowing, rather than windowing incrementally as ingestion batches
+arrive. A fully streaming version would carry partial-window state across
+ingestion batches; that's more machinery than this stage needs yet, so it
+isn't done here.
+
+Every stage after feature_extraction still emits placeholder events with
+fake payloads so the API and frontend can be built/tested before the rest
+of the pipeline (world model -> scoring -> explain) is implemented. Swap
+each remaining placeholder block for its real stage call (see TODOs)
+without changing the event schema or the API layer.
 """
 
 import time
@@ -15,7 +26,10 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 import asyncio
+import pandas as pd
 
+from src.config import load_config
+from src.features import extract
 from src.ingestion import flow_parser, packet_parser
 
 _PCAP_SUFFIXES = {".pcap", ".pcapng", ".cap"}
@@ -37,6 +51,9 @@ def _capture_kind(path: str) -> str:
 
 
 def _csv_ingestion_batches(path: str):
+    """Yields (chunk_df, progress_payload, status) — the chunk itself, so
+    the caller can accumulate it for windowing, alongside the same
+    progress payload shape as before."""
     total = 0
     for chunk in flow_parser.iter_flow_csv(path):
         n = len(chunk)
@@ -45,17 +62,14 @@ def _csv_ingestion_batches(path: str):
             time_range = [chunk["timestamp"].min().isoformat(), chunk["timestamp"].max().isoformat()]
         else:
             time_range = [None, None]
-        yield {
-            "kind": "csv",
-            "source": path,
-            "records_ingested": n,
-            "records_total": total,
-            "time_range": time_range,
-        }, "in_progress"
-    yield {"kind": "csv", "source": path, "records_ingested": 0, "records_total": total, "time_range": [None, None]}, "complete"
+        payload = {"kind": "csv", "source": path, "records_ingested": n, "records_total": total, "time_range": time_range}
+        yield chunk, payload, "in_progress"
+    yield None, {"kind": "csv", "source": path, "records_ingested": 0, "records_total": total, "time_range": [None, None]}, "complete"
 
 
 def _pcap_ingestion_batches(path: str, max_packets: int | None):
+    """Yields (batch_records, progress_payload, status), mirroring
+    _csv_ingestion_batches above."""
     total = 0
     for batch in packet_parser.iter_packets(path, max_packets=max_packets):
         n = len(batch)
@@ -65,19 +79,19 @@ def _pcap_ingestion_batches(path: str, max_packets: int | None):
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(min(timestamps))),
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(max(timestamps))),
         ] if timestamps else [None, None]
-        yield {
-            "kind": "pcap",
-            "source": path,
-            "records_ingested": n,
-            "records_total": total,
-            "time_range": time_range,
-        }, "in_progress"
-    yield {"kind": "pcap", "source": path, "records_ingested": 0, "records_total": total, "time_range": [None, None]}, "complete"
+        payload = {"kind": "pcap", "source": path, "records_ingested": n, "records_total": total, "time_range": time_range}
+        yield batch, payload, "in_progress"
+    yield None, {"kind": "pcap", "source": path, "records_ingested": 0, "records_total": total, "time_range": [None, None]}, "complete"
 
 
 async def _run_ingestion(capture_path: str | None, window_id: str, max_packets: int | None):
+    """Streams stage:ingestion events and, as a second value per
+    iteration, hands back whatever raw data arrived in that batch (a flow
+    DataFrame chunk, a list of packet records, or None for the
+    placeholder/final events) so run_pipeline can accumulate it for
+    feature_extraction without re-reading the file."""
     if capture_path is None:
-        yield {
+        yield None, {
             "stage": "ingestion",
             "window_id": window_id,
             "timestamp": time.time(),
@@ -88,8 +102,8 @@ async def _run_ingestion(capture_path: str | None, window_id: str, max_packets: 
 
     kind = _capture_kind(capture_path)
     batches = _csv_ingestion_batches(capture_path) if kind == "csv" else _pcap_ingestion_batches(capture_path, max_packets)
-    for payload, status in batches:
-        yield {
+    for chunk_data, payload, status in batches:
+        yield chunk_data, {
             "stage": "ingestion",
             "window_id": window_id,
             "timestamp": time.time(),
@@ -99,6 +113,44 @@ async def _run_ingestion(capture_path: str | None, window_id: str, max_packets: 
         await asyncio.sleep(0)  # yield to the event loop between batches
 
 
+async def _run_feature_extraction(kind: str | None, flow_chunks: list, packet_batches: list, window_id: str):
+    window_seconds = load_config().get("windowing", {}).get("window_seconds", 5)
+
+    if kind is None:
+        yield {
+            "stage": "feature_extraction",
+            "window_id": window_id,
+            "timestamp": time.time(),
+            "payload": {"feature_vector": []},
+            "status": "complete",
+        }
+        return
+
+    flow_df = pd.concat(flow_chunks, ignore_index=True) if flow_chunks else None
+    packet_records = packet_batches if packet_batches else None
+
+    windows = list(extract.iter_feature_windows(flow_df=flow_df, packet_records=packet_records, window_seconds=window_seconds))
+    if not windows:
+        yield {
+            "stage": "feature_extraction",
+            "window_id": window_id,
+            "timestamp": time.time(),
+            "payload": {"feature_vector": [], "reason": "not enough records to fill a window"},
+            "status": "complete",
+        }
+        return
+
+    for i, window in enumerate(windows):
+        yield {
+            "stage": "feature_extraction",
+            "window_id": str(window.get("window_id", window_id)),
+            "timestamp": time.time(),
+            "payload": {"feature_vector": window, "window_index": i, "window_count": len(windows)},
+            "status": "in_progress" if i < len(windows) - 1 else "complete",
+        }
+        await asyncio.sleep(0)
+
+
 async def run_pipeline(
     capture_path: str | None = None,
     max_packets: int | None = _DEFAULT_LIVE_PACKET_CAP,
@@ -106,17 +158,20 @@ async def run_pipeline(
     window_id = "w0"
     timestamp = time.time()
 
-    async for event in _run_ingestion(capture_path, window_id, max_packets):
-        yield event
+    kind = _capture_kind(capture_path) if capture_path is not None else None
+    flow_chunks: list = []
+    packet_batches: list = []
 
-    # TODO: replace with src.features.extract
-    yield {
-        "stage": "feature_extraction",
-        "window_id": window_id,
-        "timestamp": timestamp,
-        "payload": {"feature_vector": []},
-        "status": "complete",
-    }
+    async for chunk_data, event in _run_ingestion(capture_path, window_id, max_packets):
+        yield event
+        if chunk_data is not None:
+            if kind == "csv":
+                flow_chunks.append(chunk_data)
+            elif kind == "pcap":
+                packet_batches.extend(chunk_data)
+
+    async for event in _run_feature_extraction(kind, flow_chunks, packet_batches, window_id):
+        yield event
 
     # TODO: replace with src.graph.state_builder
     yield {

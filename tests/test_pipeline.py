@@ -50,6 +50,32 @@ def test_run_pipeline_streams_real_csv_ingestion(tmp_path):
     assert events[-1]["stage"] == "explainability"
 
 
+def test_run_pipeline_streams_real_feature_extraction_from_csv(tmp_path):
+    csv_path = tmp_path / "Monday-WorkingHours.pcap_ISCX.csv"
+    csv_path.write_text(CSV_HEADER + "\n" + "\n".join(CSV_ROWS) + "\n")
+
+    events = _drain(run_pipeline(capture_path=str(csv_path)))
+    fe_events = [e for e in events if e["stage"] == "feature_extraction"]
+
+    assert len(fe_events) >= 1
+    assert fe_events[-1]["status"] == "complete"
+    vector = fe_events[0]["payload"]["feature_vector"]
+    assert vector != []
+    assert vector["flow_count"] == 2  # both rows land in the same 5s window
+    # ingestion must fully finish before feature_extraction starts
+    ingestion_idx = max(i for i, e in enumerate(events) if e["stage"] == "ingestion")
+    fe_idx = min(i for i, e in enumerate(events) if e["stage"] == "feature_extraction")
+    assert ingestion_idx < fe_idx
+
+
+def test_run_pipeline_feature_extraction_placeholder_when_no_capture():
+    events = _drain(run_pipeline())
+    fe_events = [e for e in events if e["stage"] == "feature_extraction"]
+    assert len(fe_events) == 1
+    assert fe_events[0]["payload"] == {"feature_vector": []}
+    assert fe_events[0]["status"] == "complete"
+
+
 def test_run_pipeline_streams_real_pcap_ingestion(tmp_path):
     pcap_path = tmp_path / "sample.pcap"
     packets = [Ether() / IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=1234, dport=80, seq=i) for i in range(3)]
