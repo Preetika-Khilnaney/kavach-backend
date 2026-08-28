@@ -37,6 +37,9 @@ export function MonoLogLine({
     minute: '2-digit',
     second: '2-digit',
   });
+  
+  // Generate accessible label
+  const ariaLabel = `${severity} alert at ${timeStr}: ${message}${flowId ? `, flow ID ${flowId.slice(0, 8)}` : ''}`;
 
   const content = (
     <div
@@ -50,11 +53,16 @@ export function MonoLogLine({
       data-interactive={onClick ? true : undefined}
       data-risk={severity === 'critical' ? 'high' : severity === 'warning' ? 'medium' : undefined}
       onClick={onClick}
+      role={onClick ? 'button' : 'article'}
+      aria-label={onClick ? ariaLabel : undefined}
     >
-      <span className={clsx('mt-1.5 w-1.5 h-1.5 rounded-full shrink-0', styles.dot)} />
+      <span 
+        className={clsx('mt-1.5 w-1.5 h-1.5 rounded-full shrink-0', styles.dot)} 
+        aria-hidden="true"
+      />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 text-xs">
-          <span className="font-mono text-text-tertiary">{timeStr}</span>
+          <time dateTime={timestamp} className="font-mono text-text-tertiary">{timeStr}</time>
           {flowId && (
             <span className="font-mono text-text-tertiary truncate text-[10px] opacity-60">
               {flowId.slice(0, 8)}

@@ -229,7 +229,7 @@ export function Operations() {
               Live alerts ranked by forecasted intrusion impact with human-in-the-loop validation controls.
             </p>
           </div>
-          <span className="font-mono text-xs text-text-tertiary">
+          <span className="font-mono text-xs text-text-tertiary" aria-live="polite" aria-atomic="true">
             {alertsData?.length || 0} events tracked
           </span>
         </div>
@@ -238,7 +238,12 @@ export function Operations() {
           state={alertsLoading ? 'loading' : alertsError ? 'error' : 'live'}
           emptyMessage="No active anomaly alerts generated."
         >
-          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+          <div 
+            className="space-y-3 max-h-[420px] overflow-y-auto pr-1"
+            role="log"
+            aria-live="polite"
+            aria-label="Security event feed"
+          >
             {alertsData?.slice(0, 10).map((alert) => (
               <MonoLogLine
                 key={alert.id}

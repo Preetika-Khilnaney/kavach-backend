@@ -54,11 +54,20 @@ export function RiskGauge({ score, trend, delta, activeStage, explanation, class
 
   const riskColor = getRiskColor(score);
   const riskLevel = getRiskLevel(score);
+  
+  // Generate accessible label for the gauge
+  const trendText = trend === 'up' ? 'increasing' : trend === 'down' ? 'decreasing' : 'stable';
+  const ariaLabel = `Infiltration risk score: ${score} out of 100, ${riskLevel} risk level, trend ${trendText} by ${delta} points`;
 
   return (
-    <div className={clsx('flex flex-col items-center', className)} data-risk={riskLevel}>
+    <div 
+      className={clsx('flex flex-col items-center', className)} 
+      data-risk={riskLevel}
+      role="img"
+      aria-label={ariaLabel}
+    >
       <div className="relative" style={{ width: SIZE, height: SIZE / 2 + 30 }}>
-        <svg width={SIZE} height={SIZE / 2 + 20} viewBox={`0 0 ${SIZE} ${SIZE / 2 + 20}`}>
+        <svg width={SIZE} height={SIZE / 2 + 20} viewBox={`0 0 ${SIZE} ${SIZE / 2 + 20}`} aria-hidden="true">
           {/* Background arc */}
           <path
             d={`M ${STROKE / 2} ${CENTER} A ${RADIUS} ${RADIUS} 0 0 1 ${SIZE - STROKE / 2} ${CENTER}`}
@@ -88,6 +97,7 @@ export function RiskGauge({ score, trend, delta, activeStage, explanation, class
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            aria-hidden="true"
           >
             {score}
           </motion.span>
@@ -96,7 +106,7 @@ export function RiskGauge({ score, trend, delta, activeStage, explanation, class
             <span className={clsx(
               'text-sm font-medium font-mono',
               trend === 'up' ? 'text-risk-red' : trend === 'down' ? 'text-risk-green' : 'text-text-tertiary',
-            )}>
+            )} aria-hidden="true">
               {trend === 'up' ? '+' : trend === 'down' ? '-' : ''}{delta}
             </span>
           </div>
