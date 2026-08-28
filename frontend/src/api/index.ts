@@ -7,12 +7,17 @@
  *   2. Replacing the body of each function with a fetch()
  *   3. Deleting the mock-data import
  *
- * Only the ingestion pipeline is implemented on the backend so far
- * (upload -> parse CSV/PCAP -> stream progress), so only `uploadFile` and
- * `getJobProgress` below hit the real API. Everything else (flows, kill
- * chain, network graph, forecasts, benchmarks, ...) stays mocked until
- * feature extraction / the world model / scoring are built — see
- * kavach-backend's README for the current build order.
+ * Real now: uploadFile, getJobProgress, getBenchmarks, getRiskScore,
+ * getFlows, getFlow, getKillChainState, getAlerts — all backed by
+ * src/storage/results_store.py, which src/orchestrator/pipeline.py writes
+ * to as it processes each window. Empty/zeroed responses are honest until
+ * a capture's been processed on the Ingestion page, not a bug.
+ *
+ * Still mocked: getInfiltrationTimeline, getPipelineState, getNetworkGraph
+ * (Operations-level, not the Internals live graph), getForecastTree,
+ * getProvenance, getAuditTrail, submitFeedback — these need either the
+ * live WebSocket stream wired in (Model Internals pages) or don't have a
+ * backend concept to map to yet (audit trail, feedback persistence).
  */
 
 const BASE_URL = 'http://localhost:8000';
@@ -39,11 +44,9 @@ import {
   MOCK_FLOWS,
   MOCK_ALERTS,
   MOCK_TIMELINE,
-  MOCK_KILL_CHAIN,
   MOCK_PIPELINE,
   MOCK_NETWORK,
   MOCK_FORECAST,
-  MOCK_BENCHMARKS,
   MOCK_PROVENANCE,
   generateMockAuditTrail,
 } from './mock-data';
@@ -79,15 +82,12 @@ function applyFeedback<T extends { id: string; analystVerdict?: string | null; v
 // ── API Functions ────────────────────────────────────────────────────────────
 
 export async function getRiskScore(): Promise<RiskScoreResponse> {
-  await delay();
-  return {
-    score: 67,
-    trend: 'up',
-    delta: 12,
-    activeStage: 'Lateral Movement',
-    explanation:
-      'The model estimates a 67% chance of an active intrusion progressing past the Lateral Movement stage, based on elevated internal connection rates and anomalous IAT distributions.',
-  };
+  // Real: derived from the most recent prediction in src/storage/results_store.py.
+  // Zeroed out (score 0, activeStage "none") until at least one capture has
+  // been processed via the Ingestion page.
+  const res = await fetch(`${BASE_URL}/risk-score`);
+  if (!res.ok) throw new Error(`Risk score fetch failed: ${res.status} ${res.statusText}`);
+  return res.json();
 }
 
 export async function getInfiltrationTimeline(): Promise<TimelinePoint[]> {
@@ -96,8 +96,15 @@ export async function getInfiltrationTimeline(): Promise<TimelinePoint[]> {
 }
 
 export async function getFlows(filters?: FlowFilter): Promise<Flow[]> {
-  await delay();
-  let flows = applyFeedback([...MOCK_FLOWS]);
+  // Real: one row per processed feature window (src/storage/results_store.py),
+  // not one row per literal network flow -- see src/api/adapters.py's
+  // docstring for which fields are real vs. honest placeholders (this
+  // dataset has no per-window src/dst port or protocol). Filtering below
+  // stays client-side; the backend doesn't take filter params yet.
+  const res = await fetch(`${BASE_URL}/flows?limit=200`);
+  if (!res.ok) throw new Error(`Flows fetch failed: ${res.status} ${res.statusText}`);
+  const data: Flow[] = await res.json();
+  let flows = applyFeedback(data);
 
   if (filters) {
     if (filters.protocol) {
@@ -127,24 +134,31 @@ export async function getFlows(filters?: FlowFilter): Promise<Flow[]> {
 }
 
 export async function getFlow(id: string): Promise<Flow> {
-  await delay();
-  const flow = MOCK_FLOWS.find(f => f.id === id);
-  if (!flow) throw new Error(`Flow ${id} not found`);
+  const res = await fetch(`${BASE_URL}/flows/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`Flow ${id} not found`);
+  const flow = await res.json();
   const fb = feedbackStore.get(id);
   if (fb) {
     return { ...flow, analystVerdict: fb.verdict, verdictNote: fb.note, verdictAt: fb.at };
   }
-  return { ...flow };
+  return flow;
 }
 
 export async function getKillChainState(): Promise<KillChainStage[]> {
-  await delay();
-  return [...MOCK_KILL_CHAIN];
+  // Real: per-MITRE-stage counts across every stored prediction, active =
+  // the most recent one's stage (src/api/adapters.py::kill_chain_state).
+  const res = await fetch(`${BASE_URL}/kill-chain`);
+  if (!res.ok) throw new Error(`Kill chain fetch failed: ${res.status} ${res.statusText}`);
+  return res.json();
 }
 
 export async function getAlerts(): Promise<Alert[]> {
-  await delay();
-  return applyFeedback([...MOCK_ALERTS]);
+  // Real: predictions above an infiltration-probability threshold
+  // (src/storage/results_store.py::alerts, default min_probability=0.5).
+  const res = await fetch(`${BASE_URL}/alerts`);
+  if (!res.ok) throw new Error(`Alerts fetch failed: ${res.status} ${res.statusText}`);
+  const data: Alert[] = await res.json();
+  return applyFeedback(data);
 }
 
 export async function getPipelineState(): Promise<PipelineStage[]> {
@@ -166,8 +180,15 @@ export async function getForecastTree(): Promise<ForecastNode> {
 }
 
 export async function getBenchmarks(): Promise<BenchmarkMetric[]> {
-  await delay();
-  return [...MOCK_BENCHMARKS];
+  // Logistic-regression baseline vs. NetJEPA's infiltration head, both
+  // evaluated on the same held-out validation windows (src/benchmark/evaluate.py).
+  // Can take tens of seconds on a cold cache -- no artificial delay() needed.
+  const res = await fetch(`${BASE_URL}/benchmark`);
+  if (!res.ok) throw new Error(`Benchmark fetch failed: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  // NetJEPA's entry is {model, f1: null, ...} with a "note" until a
+  // trained checkpoint exists -- filter it out rather than render nulls.
+  return data.results.filter((r: any) => r.f1 !== null);
 }
 
 export async function getProvenance(): Promise<ModelProvenance> {
@@ -193,13 +214,16 @@ export async function submitFeedback(fb: FeedbackSubmission): Promise<{ ok: bool
   return { ok: true };
 }
 
-export async function uploadFile(file: File): Promise<{ jobId: string }> {
+export async function uploadFile(file: File): Promise<{ jobId: string; capturePath: string }> {
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(`${BASE_URL}/ingest/upload`, { method: 'POST', body: form });
   if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
   const data = await res.json();
-  return { jobId: data.job_id };
+  // capturePath is the server-side path (e.g. data/raw/uploads/foo.csv) --
+  // pass it to /ws/pipeline?capture_path=... to watch THIS file live on
+  // the Model Internals pages, not the placeholder demo stream.
+  return { jobId: data.job_id, capturePath: data.path };
 }
 
 export async function getJobProgress(jobId: string): Promise<JobProgress> {

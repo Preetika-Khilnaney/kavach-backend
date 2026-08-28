@@ -19,7 +19,10 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api import adapters
+from src.benchmark.evaluate import run_benchmark
 from src.orchestrator.pipeline import run_pipeline
+from src.storage import results_store
 
 app = FastAPI(title="Kavach backend")
 
@@ -125,6 +128,50 @@ async def job_progress(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail=f"Unknown job_id {job_id!r}")
     return {"stage": job["stage"], "percent": job["percent"], "complete": job["complete"]}
+
+
+@app.get("/flows")
+async def get_flows(limit: int = 100):
+    """Real predictions from src.storage.results_store, adapted into the
+    frontend's Flow shape (src/api/adapters.py) -- see that module's
+    docstring for which fields are real vs. honest placeholders. Empty
+    until at least one capture has been processed via /ingest/upload."""
+    return [adapters.row_to_flow(r) for r in results_store.recent_predictions(limit=limit)]
+
+
+@app.get("/flows/{window_id}")
+async def get_flow(window_id: str):
+    row = results_store.get_prediction(window_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown window_id {window_id!r}")
+    return adapters.row_to_flow(row)
+
+
+@app.get("/alerts")
+async def get_alerts(min_probability: float = 0.5, limit: int = 100):
+    rows = results_store.alerts(min_probability=min_probability, limit=limit)
+    return [adapters.row_to_alert(r) for r in rows]
+
+
+@app.get("/kill-chain")
+async def get_kill_chain():
+    return adapters.kill_chain_state(results_store.summary_stats())
+
+
+@app.get("/risk-score")
+async def get_risk_score():
+    return adapters.risk_score_response(results_store.summary_stats())
+
+
+@app.get("/benchmark")
+async def benchmark():
+    """Logistic regression baseline vs. NetJEPA's infiltration head,
+    evaluated on the same held-out validation windows src.training.train
+    used (src.benchmark.evaluate). Cached on the checkpoint's mtime, but a
+    cache miss still trains the baseline + runs inference over the full
+    validation set (tens of seconds) -- run off the event loop so it
+    doesn't block other requests/websocket connections meanwhile."""
+    return await asyncio.to_thread(run_benchmark)
 
 
 @app.websocket("/ws/pipeline")

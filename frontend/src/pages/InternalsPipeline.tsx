@@ -1,18 +1,26 @@
-import { useState, Suspense } from 'react';
+import { useState, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Terminal, Box, Layers } from 'lucide-react';
-import { usePipeline } from '../api/hooks';
+import { Terminal, Box, Layers, Radio } from 'lucide-react';
+import { usePipelineStream, deriveStagesFromEvents } from '../api/websocket';
 import { KillChainStepper } from '../components/KillChainStepper';
 import { MonoLogLine } from '../components/MonoLogLine';
 import { PipelineTunnel } from '../three/PipelineTunnel';
 import { DataStateWrapper } from '../components/DataStateWrapper';
+import { InternalsSubNav } from '../components/InternalsSubNav';
 import clsx from 'clsx';
 
 export function InternalsPipeline() {
   const [searchParams] = useSearchParams();
   const flowId = searchParams.get('flowId');
+  const capturePath = searchParams.get('capturePath');
 
-  const { data: stages, loading, error } = usePipeline();
+  // Real: streams stage:* events off the backend WebSocket as it actually
+  // processes `capturePath` (or the placeholder demo stream if none was
+  // passed) -- see src/api/websocket.ts. Not mocked.
+  const { events, connected, closed, error: wsError } = usePipelineStream(capturePath);
+  const stages = useMemo(() => deriveStagesFromEvents(events), [events]);
+  const loading = events.length === 0 && !closed && !wsError;
+  const error = wsError;
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
   const [selectedStageIdx, setSelectedStageIdx] = useState<number>(4); // K-step forecast active stage by default
 
@@ -41,9 +49,20 @@ export function InternalsPipeline() {
                 Inspecting Flow: {flowId.slice(0, 8)}
               </span>
             )}
+            <span
+              className={clsx(
+                'flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full border',
+                connected ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle' : 'text-text-tertiary border-border-default bg-canvas'
+              )}
+            >
+              <Radio size={10} className={connected ? 'animate-pulse' : ''} />
+              {connected ? 'LIVE STREAM' : closed ? 'STREAM CLOSED' : 'CONNECTING…'}
+            </span>
           </div>
           <p className="text-xs text-text-secondary mt-0.5">
-            7-stage self-supervised pipeline decomposing incoming packet streams into latent representations & future forecasts.
+            {capturePath
+              ? <>Live event stream for <code className="font-mono">{capturePath.split('/').pop()}</code> — every stage below is the backend genuinely processing this capture, not an animation.</>
+              : '7-stage self-supervised pipeline — placeholder demo stream (no capture selected; upload a file on the Ingestion page and click "Inspect Pipeline 3D Internals" to watch it for real).'}
           </p>
         </div>
 
@@ -80,30 +99,7 @@ export function InternalsPipeline() {
         </div>
       </div>
 
-      {/* Sub-nav tabs for Model Internals */}
-      <div className="flex items-center gap-2 border-b border-border-default pb-2 text-xs font-heading">
-        <a
-          href="#/internals/pipeline"
-          className="px-3 py-1.5 rounded-md bg-accent-indigo-subtle text-accent-indigo font-semibold"
-        >
-          Pipeline Stages
-        </a>
-        <a
-          href="#/internals/network"
-          className="px-3 py-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors"
-        >
-          Live Network Graph
-        </a>
-        <a
-          href="#/internals/forecast"
-          className="px-3 py-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors"
-        >
-          Forecast Rollout Tree
-        </a>
-        <span className="px-2 py-0.5 rounded bg-canvas border border-border-default text-text-tertiary text-[10px] ml-2">
-          Attention Heatmap (Coming Next)
-        </span>
-      </div>
+      <InternalsSubNav active="pipeline" />
 
       {/* Main View: 2D Stepper or 3D Tunnel */}
       <DataStateWrapper state={loading ? 'loading' : error ? 'error' : 'live'}>

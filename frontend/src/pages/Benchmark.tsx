@@ -7,6 +7,10 @@ import { SkeletonChart } from '../components/Skeleton';
 export function Benchmark() {
   const { data: benchmarks, loading, error } = useBenchmarks();
 
+  const netjepa = benchmarks?.find(b => b.model === 'NetJEPA');
+  const baseline = benchmarks?.find(b => b.model !== 'NetJEPA');
+  const f1Delta = netjepa && baseline ? (((netjepa.f1 - baseline.f1) / baseline.f1) * 100) : null;
+
   const chartData = (benchmarks || []).map(b => ({
     model: b.model,
     F1: Number((b.f1 * 100).toFixed(1)),
@@ -24,7 +28,8 @@ export function Benchmark() {
             Intrusion Forecasting Model Benchmark
           </h1>
           <p className="text-xs text-text-secondary mt-0.5">
-            Empirical evaluation comparing NetJEPA against supervised baselines across CIC-IDS-2018 & CTU-13 test partitions.
+            NetJEPA's infiltration head vs. a logistic regression baseline, evaluated on the same held-out
+            CIC-IDS-2017 validation windows.
           </p>
         </div>
       </div>
@@ -34,24 +39,28 @@ export function Benchmark() {
         <div className="bg-surface border border-border-default rounded-xl p-4 shadow-card">
           <span className="text-[11px] font-mono text-text-tertiary uppercase block">NetJEPA F1 Score</span>
           <div className="flex items-baseline gap-2 mt-1">
-            <span className="font-heading font-bold text-2xl text-accent-indigo">0.94</span>
-            <span className="text-xs font-mono text-risk-green font-semibold">+20.5% vs LogReg</span>
+            <span className="font-heading font-bold text-2xl text-accent-indigo">{netjepa ? netjepa.f1.toFixed(2) : '—'}</span>
+            {f1Delta !== null && (
+              <span className={`text-xs font-mono font-semibold ${f1Delta >= 0 ? 'text-risk-green' : 'text-risk-amber'}`}>
+                {f1Delta >= 0 ? '+' : ''}{f1Delta.toFixed(1)}% vs baseline
+              </span>
+            )}
           </div>
         </div>
 
         <div className="bg-surface border border-border-default rounded-xl p-4 shadow-card">
           <span className="text-[11px] font-mono text-text-tertiary uppercase block">Recall (Early Detection)</span>
           <div className="flex items-baseline gap-2 mt-1">
-            <span className="font-heading font-bold text-2xl text-accent-teal">0.96</span>
-            <span className="text-xs font-mono text-risk-green font-semibold">96% of breaches</span>
+            <span className="font-heading font-bold text-2xl text-accent-teal">{netjepa ? netjepa.recall.toFixed(2) : '—'}</span>
+            {netjepa && <span className="text-xs font-mono text-risk-green font-semibold">{(netjepa.recall * 100).toFixed(0)}% of attacks caught</span>}
           </div>
         </div>
 
         <div className="bg-surface border border-border-default rounded-xl p-4 shadow-card">
           <span className="text-[11px] font-mono text-text-tertiary uppercase block">False Positive Rate</span>
           <div className="flex items-baseline gap-2 mt-1">
-            <span className="font-heading font-bold text-2xl text-risk-green">0.03</span>
-            <span className="text-xs font-mono text-text-secondary">3% alarm noise</span>
+            <span className="font-heading font-bold text-2xl text-risk-green">{netjepa ? netjepa.fpr.toFixed(2) : '—'}</span>
+            {netjepa && <span className="text-xs font-mono text-text-secondary">{(netjepa.fpr * 100).toFixed(0)}% alarm noise</span>}
           </div>
         </div>
 
@@ -63,6 +72,13 @@ export function Benchmark() {
           </div>
         </div>
       </div>
+
+      {!loading && !error && !netjepa && (
+        <div className="p-3.5 bg-canvas rounded-xl border border-border-default text-xs text-text-secondary">
+          NetJEPA has no trained checkpoint yet — showing the logistic regression baseline only.
+          Run <code className="font-mono text-accent-indigo">python -m src.training.train</code> on the backend, then reload.
+        </div>
+      )}
 
       {/* Benchmark Chart & Table */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -113,7 +129,14 @@ export function Benchmark() {
           </DataStateWrapper>
 
           <p className="text-xs text-text-secondary pt-2 border-t border-border-default leading-relaxed">
-            <strong>Key takeaway:</strong> NetJEPA achieves significantly higher recall (96%) and a lower false-positive rate (3%) compared to traditional logistic regression and shallow baselines, minimizing alert fatigue in SOC operations.
+            <strong>Key takeaway:</strong>{' '}
+            {netjepa && baseline ? (
+              f1Delta !== null && f1Delta >= 0
+                ? `NetJEPA outperforms the logistic regression baseline by ${f1Delta.toFixed(1)}% F1 (${(netjepa.recall * 100).toFixed(0)}% recall, ${(netjepa.fpr * 100).toFixed(0)}% false-positive rate) on the same held-out validation windows.`
+                : `NetJEPA currently trails the logistic regression baseline by ${Math.abs(f1Delta ?? 0).toFixed(1)}% F1 on held-out validation windows — this checkpoint needs more training before it beats a simple baseline.`
+            ) : (
+              'Waiting on a trained NetJEPA checkpoint to compare against the baseline — see the note above.'
+            )}
           </p>
         </div>
 
@@ -162,7 +185,8 @@ export function Benchmark() {
               <span>Scientific Evaluation Transparency</span>
             </div>
             <p className="text-[11px] leading-relaxed">
-              Tested on 120,000 flow vectors from held-out CIC-IDS-2018 test sets. For detailed dataset composition and caveats, open the Model Provenance drawer.
+              Evaluated on a held-out slice (never seen during training) of CIC-IDS-2017 flow windows — same
+              validation set for both models. For dataset composition and caveats, open the Model Provenance drawer.
             </p>
           </div>
         </div>

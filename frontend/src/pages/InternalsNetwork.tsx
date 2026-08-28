@@ -1,14 +1,29 @@
 import { useState, useMemo, Suspense } from 'react';
-import { Network, Box, Layers } from 'lucide-react';
-import { useNetworkGraph } from '../api/hooks';
+import { useSearchParams } from 'react-router-dom';
+import { Network, Box, Layers, Radio } from 'lucide-react';
+import { usePipelineStream, deriveNetworkGraphFromEvents } from '../api/websocket';
 import { NetworkScene } from '../three/NetworkScene';
 import { GraphNode } from '../components/GraphNode';
 import { GraphEdge } from '../components/GraphEdge';
 import { DataStateWrapper } from '../components/DataStateWrapper';
+import { InternalsSubNav } from '../components/InternalsSubNav';
 import clsx from 'clsx';
 
 export function InternalsNetwork() {
-  const { data: graphData, loading, error } = useNetworkGraph();
+  const [searchParams] = useSearchParams();
+  const capturePath = searchParams.get('capturePath');
+
+  // Real: the most recent stage:state_representation event's graph (see
+  // src/api/websocket.ts) -- a genuine G_t = (V_t, E_t) snapshot the
+  // backend built for whatever window it's currently on, not mocked.
+  // "host" nodes only appear for PCAP-derived windows with real IPs (see
+  // src/graph/state_builder.py's docstring) -- a CSV-derived capture will
+  // show only the single aggregate "network" node until/unless a
+  // PCAP-sourced window comes through.
+  const { events, connected, closed, error: wsError } = usePipelineStream(capturePath);
+  const graphData = useMemo(() => deriveNetworkGraphFromEvents(events), [events]);
+  const loading = events.length === 0 && !closed && !wsError;
+  const error = wsError;
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -48,11 +63,24 @@ export function InternalsNetwork() {
       {/* Header with 2D / 3D Mode Toggle & Sub-Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-heading font-bold text-text-primary tracking-tight">
-            Model Internals — Live Latent Graph State
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-heading font-bold text-text-primary tracking-tight">
+              Model Internals — Live Latent Graph State
+            </h1>
+            <span
+              className={clsx(
+                'flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full border',
+                connected ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle' : 'text-text-tertiary border-border-default bg-canvas'
+              )}
+            >
+              <Radio size={10} className={connected ? 'animate-pulse' : ''} />
+              {connected ? 'LIVE STREAM' : closed ? 'STREAM CLOSED' : 'CONNECTING…'}
+            </span>
+          </div>
           <p className="text-xs text-text-secondary mt-0.5">
-            Dynamic host-flow topology representation consumed by the NetJEPA world model.
+            Dynamic host-flow topology consumed by the NetJEPA world model, straight off the
+            live event stream. CSV-derived captures show only the aggregate "network" node —
+            real per-host graphs need a PCAP-derived window (see the backend README).
           </p>
         </div>
 
@@ -89,30 +117,7 @@ export function InternalsNetwork() {
         </div>
       </div>
 
-      {/* Sub-nav tabs for Model Internals */}
-      <div className="flex items-center gap-2 border-b border-border-default pb-2 text-xs font-heading">
-        <a
-          href="#/internals/pipeline"
-          className="px-3 py-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors"
-        >
-          Pipeline Stages
-        </a>
-        <a
-          href="#/internals/network"
-          className="px-3 py-1.5 rounded-md bg-accent-indigo-subtle text-accent-indigo font-semibold"
-        >
-          Live Network Graph
-        </a>
-        <a
-          href="#/internals/forecast"
-          className="px-3 py-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors"
-        >
-          Forecast Rollout Tree
-        </a>
-        <span className="px-2 py-0.5 rounded bg-canvas border border-border-default text-text-tertiary text-[10px] ml-2">
-          Attention Heatmap (Coming Next)
-        </span>
-      </div>
+      <InternalsSubNav active="network" />
 
       {/* Main Grid: Graph (Left) + Selected Node Inspector (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

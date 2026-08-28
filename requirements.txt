@@ -21,6 +21,9 @@ torch-geometric
 shap
 captum
 
+# benchmark/evaluation
+scikit-learn
+
 # storage
 redis
 sqlalchemy

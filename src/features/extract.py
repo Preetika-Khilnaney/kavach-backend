@@ -47,12 +47,24 @@ def _window_bounds(epoch_seconds: pd.Series, window_seconds: int) -> pd.Series:
     return (epoch_seconds // window_seconds).astype("int64") * window_seconds
 
 
-def _window_flow_records(flow_df: pd.DataFrame | None, window_seconds: int) -> pd.DataFrame:
+def _window_flow_records(flow_df: pd.DataFrame | None, window_seconds: int, rows_per_window: int | None = None) -> pd.DataFrame:
     if flow_df is None or flow_df.empty:
         return pd.DataFrame()
 
     df = flow_df.copy()
-    df["window_start"] = _window_bounds(_to_epoch_seconds(df["timestamp"]), window_seconds)
+    if rows_per_window is not None:
+        # Row-count windows instead of time windows. Exists for training:
+        # flow_parser's synthesized timestamp (see its docstring) inflates
+        # wildly for the 3 weekdays with no real PCAP anchor -- e.g. one
+        # 530k-row day produced 109k 5-second time windows, ~5 rows each,
+        # too sparse to be a meaningful aggregate. A fixed row count per
+        # window sidesteps that entirely: every window has exactly
+        # `rows_per_window` rows regardless of what the synthetic
+        # timestamp says, so window count and density are predictable.
+        # window_start here is a block index, not a timestamp.
+        df["window_start"] = np.arange(len(df)) // rows_per_window
+    else:
+        df["window_start"] = _window_bounds(_to_epoch_seconds(df["timestamp"]), window_seconds)
     g = df.groupby("window_start", sort=True)
 
     out = pd.DataFrame({"flow_count": g.size()})
@@ -81,6 +93,13 @@ def _window_flow_records(flow_df: pd.DataFrame | None, window_seconds: int) -> p
     if "label" in df.columns:
         out["flow_attack_ratio"] = g["label"].agg(lambda s: float((s.astype(str) != "BENIGN").mean()))
         out["flow_dominant_label"] = g["label"].agg(lambda s: s.mode().iat[0] if not s.mode().empty else None)
+        # Rare attack types (e.g. Infiltration: 36 rows out of 288k) never
+        # win a majority vote once windows span 100+ rows -- the mode above
+        # would silently always say "BENIGN" for them. This keeps every
+        # distinct label actually seen in the window, so a caller (e.g.
+        # training label derivation) can still find a rare attack that's
+        # present but not dominant.
+        out["flow_labels_present"] = g["label"].agg(lambda s: sorted(set(s.astype(str))))
 
     return out.reset_index()
 
@@ -114,6 +133,17 @@ def _window_packet_records(packet_records, window_seconds: int) -> pd.DataFrame:
     for col in ("src_ip", "dst_ip"):
         if col in df.columns:
             out[f"packet_{col}_nunique"] = g[col].nunique()
+    if {"src_ip", "dst_ip"} <= set(df.columns):
+        # Real observed (src, dst) pairs per window -- this is what
+        # src.graph.state_builder needs to draw actual edges instead of
+        # just knowing two separate host counts. Built with a plain loop
+        # rather than groupby().apply() to sidestep a pandas-version
+        # pitfall (see _to_epoch_seconds's docstring for a similar one).
+        edges_by_window = {
+            window_start: sorted(set(zip(group["src_ip"], group["dst_ip"])))
+            for window_start, group in g
+        }
+        out["packet_edges"] = pd.Series(edges_by_window)
 
     return out.reset_index()
 
@@ -136,6 +166,7 @@ def build_feature_windows(
     packet_records=None,
     window_seconds: int = 5,
     normalize: bool = True,
+    rows_per_window: int | None = None,
 ) -> pd.DataFrame:
     """Window flow and/or packet records into one aggregate row per
     `window_seconds`-wide bucket (tumbling windows — see the module
@@ -145,8 +176,15 @@ def build_feature_windows(
     them on `window_start` (see the module docstring's caveat on when that
     merge is actually meaningful). Returns an empty DataFrame if both
     inputs are empty/None.
+
+    `rows_per_window` switches flow_df windowing from time-based to a
+    fixed row count per window (see _window_flow_records) — a training-time
+    escape hatch for flow_parser's synthetic-timestamp inflation on
+    unanchored days. Only affects flow_df; packet_records windowing is
+    always time-based (packet timestamps are real). When set,
+    `window_start`/`window_end` are row-block indices, not timestamps.
     """
-    flow_windows = _window_flow_records(flow_df, window_seconds)
+    flow_windows = _window_flow_records(flow_df, window_seconds, rows_per_window=rows_per_window)
     packet_windows = _window_packet_records(packet_records, window_seconds)
 
     if flow_windows.empty and packet_windows.empty:
@@ -159,7 +197,7 @@ def build_feature_windows(
         combined = pd.merge(flow_windows, packet_windows, on="window_start", how="outer")
 
     combined = combined.sort_values("window_start").reset_index(drop=True)
-    combined["window_end"] = combined["window_start"] + window_seconds
+    combined["window_end"] = combined["window_start"] + (1 if rows_per_window is not None else window_seconds)
     combined["window_id"] = combined["window_start"].astype("int64").astype(str)
 
     count_cols = [c for c in ("flow_count", "packet_count") if c in combined.columns]
@@ -179,11 +217,14 @@ def iter_feature_windows(
     packet_records=None,
     window_seconds: int = 5,
     normalize: bool = True,
+    rows_per_window: int | None = None,
 ) -> Iterator[dict]:
     """Same as build_feature_windows, but yields one window (as a dict) at
     a time, in window order — lets a caller (the orchestrator) emit a
     stage:feature_extraction event per window instead of waiting for the
-    whole matrix to build."""
-    matrix = build_feature_windows(flow_df, packet_records, window_seconds=window_seconds, normalize=normalize)
+    whole matrix to build. See build_feature_windows for `rows_per_window`."""
+    matrix = build_feature_windows(
+        flow_df, packet_records, window_seconds=window_seconds, normalize=normalize, rows_per_window=rows_per_window
+    )
     for _, row in matrix.iterrows():
         yield row.to_dict()

@@ -62,6 +62,14 @@ def test_window_packet_only_buckets_and_aggregates():
     assert matrix.loc[1, "packet_port_scan_flagged"] == True  # noqa: E712
 
 
+def test_window_packet_records_capture_real_edges():
+    matrix = extract.build_feature_windows(packet_records=_packet_records(), window_seconds=5, normalize=False)
+    first_window_edges = set(matrix.loc[0, "packet_edges"])
+    assert first_window_edges == {("10.0.0.1", "10.0.0.2"), ("10.0.0.1", "10.0.0.3")}
+    second_window_edges = set(matrix.loc[1, "packet_edges"])
+    assert second_window_edges == {("10.0.0.4", "10.0.0.2")}
+
+
 def test_build_feature_windows_accepts_dataframe_packet_records():
     df = pd.DataFrame(_packet_records())
     matrix = extract.build_feature_windows(packet_records=df, window_seconds=5, normalize=False)
@@ -70,9 +78,25 @@ def test_build_feature_windows_accepts_dataframe_packet_records():
 
 def test_normalize_zero_means_unit_std_per_column():
     matrix = extract.build_feature_windows(flow_df=_flow_df(), window_seconds=5, normalize=True)
-    numeric_cols = [c for c in matrix.columns if c not in ("window_id", "window_start", "window_end", "flow_count", "flow_dominant_label")]
+    skip = {"window_id", "window_start", "window_end", "flow_count"}
+    numeric_cols = [c for c in matrix.columns if c not in skip and pd.api.types.is_numeric_dtype(matrix[c])]
+    assert numeric_cols  # sanity: the exclusion above shouldn't accidentally empty this out
     for col in numeric_cols:
         assert abs(matrix[col].mean()) < 1e-9
+
+
+def test_rows_per_window_ignores_synthetic_timestamp_spread():
+    # 10 rows, each 5 rows apart in real time, but the "timestamp" column
+    # is deliberately wild (mimicking flow_parser's synthetic-timeline
+    # inflation) -- row-count windowing must ignore it entirely.
+    df = _flow_df()
+    wide_timestamps = pd.to_datetime(["2017-07-03 09:00:00", "2017-07-03 09:00:02", "2017-07-10 03:00:00"])
+    df["timestamp"] = wide_timestamps
+
+    matrix = extract.build_feature_windows(flow_df=df, rows_per_window=2, normalize=False)
+
+    assert len(matrix) == 2  # 3 rows / 2 per window -> windows of size 2, 1
+    assert matrix["flow_count"].tolist() == [2, 1]
 
 
 def test_empty_inputs_return_empty_dataframe():

@@ -24,6 +24,7 @@ export function Ingest() {
   const [activeStageIdx, setActiveStageIdx] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
   const [statusText, setStatusText] = useState('');
+  const [capturePath, setCapturePath] = useState<string | null>(null);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -60,7 +61,8 @@ export function Ingest() {
     setStatusText('Uploading PCAP / Flow capture telemetry...');
 
     try {
-      const { jobId } = await uploadFile(file);
+      const { jobId, capturePath } = await uploadFile(file);
+      setCapturePath(capturePath);
 
       // Poll the real backend job (src/api/main.py -> GET /jobs/{id}/progress).
       // Only ingestion is real so far; percent still advances smoothly
@@ -242,7 +244,7 @@ export function Ingest() {
 
                 <button
                   type="button"
-                  onClick={() => navigate('/internals/pipeline')}
+                  onClick={() => navigate(capturePath ? `/internals/pipeline?capturePath=${encodeURIComponent(capturePath)}` : '/internals/pipeline')}
                   data-interactive
                   className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-accent-indigo text-white hover:bg-accent-indigo-light shadow-glow-indigo transition-all"
                 >

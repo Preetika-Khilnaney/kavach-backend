@@ -1,48 +1,99 @@
-import { GitBranch, Sparkles } from 'lucide-react';
-import { useForecast } from '../api/hooks';
+import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { GitBranch, Sparkles, Radio } from 'lucide-react';
+import { usePipelineStream } from '../api/websocket';
 import { DataStateWrapper } from '../components/DataStateWrapper';
+import { InternalsSubNav } from '../components/InternalsSubNav';
+import clsx from 'clsx';
+
+const CHART_WIDTH = 700;
+const CHART_HEIGHT = 300;
+const LEFT_PAD = 70;
+const RIGHT_PAD = 60;
+const TOP_PAD = 40;
+const BOTTOM_PAD = 40;
+
+function riskToY(risk: number): number {
+  // higher risk -> higher on screen, matching the escalation-reads-upward
+  // convention the original mock design used.
+  const usable = CHART_HEIGHT - TOP_PAD - BOTTOM_PAD;
+  return TOP_PAD + usable * (1 - risk / 100);
+}
+
+function bezierPath(points: { x: number; y: number }[]): string {
+  if (points.length < 2) return '';
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i];
+    const p1 = points[i + 1];
+    const midX = (p0.x + p1.x) / 2;
+    d += ` C ${midX} ${p0.y}, ${midX} ${p1.y}, ${p1.x} ${p1.y}`;
+  }
+  return d;
+}
 
 export function InternalsForecast() {
-  const { data: forecastRoot, loading, error } = useForecast();
+  const [searchParams] = useSearchParams();
+  const capturePath = searchParams.get('capturePath');
+
+  // Real: this project's actual rollout is ONE autoregressive trajectory
+  // (src/models/netjepa.py's Predictor.rollout feeds each prediction back
+  // in as the next step) -- not a branching tree with real alternative
+  // probabilities, so unlike the original mock, this shows a single real
+  // path instead of fabricated alt-branches.
+  const { events, connected, closed, error: wsError } = usePipelineStream(capturePath);
+  const loading = events.length === 0 && !closed && !wsError;
+  const error = wsError;
+
+  const latestMapping = useMemo(() => [...events].reverse().find((e) => e.stage === 'attack_mapping'), [events]);
+  const trained = latestMapping?.payload?.trained ?? false;
+  const attackStage = latestMapping?.payload?.attack_stage ?? null;
+
+  const points = useMemo(() => {
+    if (!latestMapping) return [];
+    const current = (latestMapping.payload.infiltration_probability ?? 0) * 100;
+    const curve: number[] = latestMapping.payload.infiltration_curve ?? [];
+    const risks = [current, ...curve.slice(0, 4).map((p: number) => p * 100)];
+    const usableWidth = CHART_WIDTH - LEFT_PAD - RIGHT_PAD;
+    return risks.map((risk, i) => ({
+      step: i,
+      risk,
+      x: LEFT_PAD + (risks.length > 1 ? (usableWidth * i) / (risks.length - 1) : 0),
+      y: riskToY(risk),
+    }));
+  }, [latestMapping]);
+
+  const pathD = useMemo(() => bezierPath(points), [points]);
+  const startRisk = points[0]?.risk;
+  const endRisk = points[points.length - 1]?.risk;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-heading font-bold text-text-primary tracking-tight">
-            Model Internals — K-Step Forecast Rollout Tree
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-heading font-bold text-text-primary tracking-tight">
+              Model Internals — K-Step Forecast Rollout
+            </h1>
+            <span
+              className={clsx(
+                'flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full border',
+                connected ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle' : 'text-text-tertiary border-border-default bg-canvas'
+              )}
+            >
+              <Radio size={10} className={connected ? 'animate-pulse' : ''} />
+              {connected ? 'LIVE STREAM' : closed ? 'STREAM CLOSED' : 'CONNECTING…'}
+            </span>
+          </div>
           <p className="text-xs text-text-secondary mt-0.5">
-            Self-supervised forward state simulation across K=4 time horizons predicting intrusion escalation.
+            NetJEPA's actual autoregressive rollout — each step is the predictor's own prior output fed
+            back in as the next input, one real trajectory, not a branching search.
           </p>
         </div>
       </div>
 
-      {/* Sub-nav tabs for Model Internals */}
-      <div className="flex items-center gap-2 border-b border-border-default pb-2 text-xs font-heading">
-        <a
-          href="#/internals/pipeline"
-          className="px-3 py-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors"
-        >
-          Pipeline Stages
-        </a>
-        <a
-          href="#/internals/network"
-          className="px-3 py-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-canvas transition-colors"
-        >
-          Live Network Graph
-        </a>
-        <a
-          href="#/internals/forecast"
-          className="px-3 py-1.5 rounded-md bg-accent-indigo-subtle text-accent-indigo font-semibold"
-        >
-          Forecast Rollout Tree
-        </a>
-        <span className="px-2 py-0.5 rounded bg-canvas border border-border-default text-text-tertiary text-[10px] ml-2">
-          Attention Heatmap (Coming Next)
-        </span>
-      </div>
+      <InternalsSubNav active="forecast" />
 
       {/* Main Rollout Canvas */}
       <DataStateWrapper state={loading ? 'loading' : error ? 'error' : 'live'}>
@@ -51,100 +102,39 @@ export function InternalsForecast() {
             <div className="flex items-center gap-2">
               <GitBranch size={16} className="text-accent-indigo" />
               <h3 className="font-heading font-semibold text-sm text-text-primary">
-                Predictive Branching Trajectory (Horizon: t+1 to t+4)
+                Infiltration Probability Rollout {points.length > 1 ? `(t0 → t+${points.length - 1})` : ''}
               </h3>
             </div>
-            <div className="flex items-center gap-3 text-xs font-mono text-text-tertiary">
-              <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-accent-indigo" /> High Probability Path
+            {!trained && points.length > 0 && (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-risk-amber-subtle text-risk-amber border border-risk-amber/40">
+                UNTRAINED MODEL — numbers are architecture-verified noise
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-border-default" /> Alternative Branches
-              </span>
-            </div>
+            )}
           </div>
 
-          {/* Forecast Tree Diagram (Interactive SVG) */}
+          {/* Rollout Trajectory (Interactive SVG, built from real points) */}
           <div className="w-full overflow-x-auto py-4">
-            <div className="min-w-[700px] h-[340px] flex items-center justify-between relative px-8">
-              {/* Step columns: t0 (Current), t+1, t+2, t+3, t+4 */}
-              {['t0 (Current)', 't+1 (15m)', 't+2 (30m)', 't+3 (45m)', 't+4 (60m)'].map((col, idx) => (
-                <div key={idx} className="flex flex-col items-center gap-1 z-10">
-                  <span className="font-mono text-xs font-semibold text-text-secondary bg-canvas px-2.5 py-1 rounded-full border border-border-default">
-                    {col}
-                  </span>
-                </div>
-              ))}
-
-              {/* Visual Tree Rendering */}
-              {forecastRoot && (
-                <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                  {/* Branching curves from t0 to t4 */}
-                  <path
-                    d="M 120 170 C 220 170, 240 100, 310 100 C 380 100, 420 80, 480 80 C 540 80, 580 90, 640 90"
-                    fill="none"
-                    stroke="#4F46E5"
-                    strokeWidth="3"
-                    strokeDasharray="none"
-                  />
-                  <path
-                    d="M 120 170 C 220 170, 240 170, 310 170 C 380 170, 420 160, 480 160 C 540 160, 580 170, 640 170"
-                    fill="none"
-                    stroke="#E4E9EF"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M 120 170 C 220 170, 240 240, 310 240 C 380 240, 420 250, 480 250 C 540 250, 580 260, 640 260"
-                    fill="none"
-                    stroke="#E4E9EF"
-                    strokeWidth="1.5"
-                  />
+            <div className="min-w-[700px] h-[340px] flex items-center justify-center relative">
+              {points.length === 0 ? (
+                <p className="text-xs text-text-secondary">
+                  No rollout yet — waiting on the first window's attack_mapping event.
+                </p>
+              ) : (
+                <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} className="w-full h-full">
+                  <path d={pathD} fill="none" stroke="#4F46E5" strokeWidth="3" />
+                  {points.map((p) => (
+                    <g key={p.step} transform={`translate(${p.x}, ${p.y})`}>
+                      <circle r={7} className="fill-surface stroke-accent-indigo" strokeWidth={2} />
+                      <text y={-16} textAnchor="middle" className="fill-text-primary font-heading text-[11px] font-bold">
+                        {Math.round(p.risk)}%
+                      </text>
+                      <text y={26} textAnchor="middle" className="fill-text-tertiary font-mono text-[9px]">
+                        {p.step === 0 ? 't0 (current)' : `t+${p.step}`}
+                      </text>
+                    </g>
+                  ))}
                 </svg>
               )}
-
-              {/* Node Placements across steps */}
-              {/* Root */}
-              <div
-                className="absolute left-[70px] top-[140px] z-20 bg-surface border-2 border-accent-indigo rounded-xl p-3 shadow-card cursor-pointer hover:scale-105 transition-all w-28"
-              >
-                <span className="font-mono text-[10px] text-text-tertiary block">Observed</span>
-                <span className="font-heading font-bold text-sm text-text-primary">Risk 42</span>
-                <span className="font-mono text-[10px] text-risk-green block">Prob 100%</span>
-              </div>
-
-              {/* Step 1 Branches */}
-              <div
-                className="absolute left-[260px] top-[75px] z-20 bg-surface border-2 border-accent-indigo rounded-xl p-2.5 shadow-card cursor-pointer hover:scale-105 transition-all w-28"
-              >
-                <span className="font-mono text-[10px] text-accent-indigo font-bold block">Most Likely</span>
-                <span className="font-heading font-bold text-xs text-text-primary">Risk 54</span>
-                <span className="font-mono text-[10px] text-accent-indigo block">Prob 73%</span>
-              </div>
-              <div
-                className="absolute left-[260px] top-[215px] z-20 bg-surface border border-border-default rounded-xl p-2.5 shadow-xs cursor-pointer hover:scale-105 transition-all w-28 opacity-80"
-              >
-                <span className="font-mono text-[10px] text-text-tertiary block">Alt Branch</span>
-                <span className="font-heading font-bold text-xs text-text-primary">Risk 38</span>
-                <span className="font-mono text-[10px] text-text-tertiary block">Prob 27%</span>
-              </div>
-
-              {/* Step 2 Branches */}
-              <div
-                className="absolute left-[430px] top-[55px] z-20 bg-surface border-2 border-accent-indigo rounded-xl p-2.5 shadow-card cursor-pointer hover:scale-105 transition-all w-28"
-              >
-                <span className="font-mono text-[10px] text-accent-indigo font-bold block">Lateral Move</span>
-                <span className="font-heading font-bold text-xs text-risk-amber">Risk 61</span>
-                <span className="font-mono text-[10px] text-accent-indigo block">Prob 68%</span>
-              </div>
-
-              {/* Step 4 Projected Terminus */}
-              <div
-                className="absolute left-[590px] top-[65px] z-20 bg-surface border-2 border-risk-red rounded-xl p-2.5 shadow-card cursor-pointer hover:scale-105 transition-all w-32"
-              >
-                <span className="font-mono text-[10px] text-risk-red font-bold block">Critical Terminus</span>
-                <span className="font-heading font-bold text-xs text-risk-red">Risk 78 (C2)</span>
-                <span className="font-mono text-[10px] text-text-secondary block">Cumulative: 62%</span>
-              </div>
             </div>
           </div>
 
@@ -156,7 +146,16 @@ export function InternalsForecast() {
                 Plain-Language Forecast Synthesis
               </h4>
               <p className="text-xs text-text-secondary leading-relaxed font-body">
-                The model’s most likely forecast projects intrusion risk to escalate from <strong className="text-text-primary">42 to 78</strong> over the next 4 time steps (60 minutes). This trajectory is primarily driven by expanding lateral port-sweep behaviors and abnormal inter-arrival time distributions between internal workstations and database clusters.
+                {points.length > 1 ? (
+                  <>
+                    The model's rollout projects infiltration probability {endRisk! >= startRisk! ? 'rising' : 'falling'} from{' '}
+                    <strong className="text-text-primary">{Math.round(startRisk!)}% to {Math.round(endRisk!)}%</strong> over the next{' '}
+                    {points.length - 1} step(s), currently mapped to the '{attackStage ?? 'unknown'}' MITRE stage.
+                    {!trained && ' The model has no trained weights yet, so this trajectory is not meaningful — it will update once training completes.'}
+                  </>
+                ) : (
+                  'Waiting for a window to roll out.'
+                )}
               </p>
             </div>
           </div>
