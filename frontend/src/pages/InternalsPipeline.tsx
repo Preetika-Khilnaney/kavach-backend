@@ -168,13 +168,18 @@ export function InternalsPipeline() {
       {/* Bottom Process Narration Log (Explainability Principle: No Black Box) */}
       <div className="bg-surface border border-border-default rounded-2xl p-6 shadow-card space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border-default">
-          <Terminal size={16} className="text-accent-teal" />
+          <Terminal size={16} className="text-accent-teal" aria-hidden="true" />
           <h3 className="font-heading font-semibold text-sm text-text-primary">
             Plain-Language Process Narration Log
           </h3>
         </div>
 
-        <div className="space-y-2.5 font-mono text-xs max-h-60 overflow-y-auto pr-1">
+        <div 
+          className="space-y-2.5 font-mono text-xs max-h-60 overflow-y-auto pr-1"
+          role="log"
+          aria-live="polite"
+          aria-label="Pipeline process narration"
+        >
           {stages?.map((stage, idx) => (
             <MonoLogLine
               key={idx}

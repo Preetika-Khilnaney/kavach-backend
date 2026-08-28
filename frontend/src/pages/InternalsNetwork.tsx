@@ -24,7 +24,7 @@ export function InternalsNetwork() {
   const graphData = useMemo(() => deriveNetworkGraphFromEvents(events), [events]);
   const loading = events.length === 0 && !closed && !wsError;
   const error = wsError;
-  const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
+  const [viewMode, setViewMode] = useState<'3d' | '2d' | 'table'>('3d');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   // Compute 2D node positions using a circle layout for deterministic 2D rendering
@@ -88,8 +88,24 @@ export function InternalsNetwork() {
         <div className="flex items-center bg-surface border border-border-default rounded-lg p-1">
           <button
             type="button"
+            onClick={() => setViewMode('table')}
+            data-interactive
+            aria-label="View as accessible table"
+            className={clsx(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+              viewMode === 'table'
+                ? 'bg-accent-indigo text-white font-semibold shadow-xs'
+                : 'text-text-secondary hover:text-text-primary'
+            )}
+          >
+            <Layers size={14} aria-hidden="true" />
+            <span>Table</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setViewMode('2d')}
             data-interactive
+            aria-label="View as 2D graph"
             className={clsx(
               'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
               viewMode === '2d'
@@ -97,13 +113,14 @@ export function InternalsNetwork() {
                 : 'text-text-secondary hover:text-text-primary'
             )}
           >
-            <Layers size={14} />
-            <span>2D Graph</span>
+            <Network size={14} aria-hidden="true" />
+            <span>2D</span>
           </button>
           <button
             type="button"
             onClick={() => setViewMode('3d')}
             data-interactive
+            aria-label="View as 3D spatial scene"
             className={clsx(
               'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
               viewMode === '3d'
@@ -111,8 +128,8 @@ export function InternalsNetwork() {
                 : 'text-text-secondary hover:text-text-primary'
             )}
           >
-            <Box size={14} />
-            <span>3D Spatial Scene</span>
+            <Box size={14} aria-hidden="true" />
+            <span>3D</span>
           </button>
         </div>
       </div>
@@ -123,7 +140,75 @@ export function InternalsNetwork() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8 bg-surface border border-border-default rounded-2xl p-4 shadow-card">
           <DataStateWrapper state={loading ? 'loading' : error ? 'error' : 'live'}>
-            {viewMode === '3d' ? (
+            {viewMode === 'table' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <caption className="sr-only">Network nodes with risk contributions and connections</caption>
+                  <thead>
+                    <tr className="border-b border-border-default">
+                      <th scope="col" className="text-left p-3 font-heading font-semibold text-text-primary">Hostname</th>
+                      <th scope="col" className="text-left p-3 font-heading font-semibold text-text-primary">IP Address</th>
+                      <th scope="col" className="text-left p-3 font-heading font-semibold text-text-primary">Type</th>
+                      <th scope="col" className="text-right p-3 font-heading font-semibold text-text-primary">Risk Contribution</th>
+                      <th scope="col" className="text-right p-3 font-heading font-semibold text-text-primary">Connections</th>
+                      <th scope="col" className="text-center p-3 font-heading font-semibold text-text-primary">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {graphData?.nodes.map((node) => {
+                      const connections = graphData.edges.filter(
+                        e => e.source === node.id || e.target === node.id
+                      ).length;
+                      const isSelected = selectedNodeId === node.id;
+                      
+                      return (
+                        <tr 
+                          key={node.id} 
+                          className={clsx(
+                            'border-b border-border-default hover:bg-canvas transition-colors',
+                            isSelected && 'bg-accent-indigo-subtle'
+                          )}
+                        >
+                          <td className="p-3 font-medium text-text-primary">{node.hostname}</td>
+                          <td className="p-3 font-mono text-text-secondary">{node.ip}</td>
+                          <td className="p-3">
+                            <span className="inline-block px-2 py-0.5 rounded bg-canvas border border-border-default text-text-secondary font-mono text-[10px]">
+                              {node.type.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <span className={clsx(
+                              'font-mono font-bold',
+                              node.riskContribution > 0.5 ? 'text-risk-red' : 
+                              node.riskContribution > 0.3 ? 'text-risk-amber' : 'text-risk-green'
+                            )}>
+                              {(node.riskContribution * 100).toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="p-3 text-right font-mono text-text-secondary">{connections}</td>
+                          <td className="p-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedNodeId(node.id)}
+                              data-interactive
+                              aria-label={`Inspect ${node.hostname}`}
+                              className="px-2 py-1 text-[10px] rounded border border-border-default bg-surface hover:bg-canvas text-accent-indigo font-medium transition-colors"
+                            >
+                              Inspect
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {graphData?.nodes.length === 0 && (
+                  <div className="text-center py-12 text-text-secondary text-sm">
+                    No network nodes available
+                  </div>
+                )}
+              </div>
+            ) : viewMode === '3d' ? (
               <Suspense fallback={<div className="h-[520px] bg-canvas rounded-xl animate-pulse" />}>
                 <NetworkScene
                   nodes={graphData?.nodes || []}
@@ -134,7 +219,7 @@ export function InternalsNetwork() {
               </Suspense>
             ) : (
               <div className="w-full h-[520px] bg-canvas rounded-xl overflow-hidden border border-border-default flex items-center justify-center p-4">
-                <svg viewBox="0 0 720 480" className="w-full h-full">
+                <svg viewBox="0 0 720 480" className="w-full h-full" aria-label="Network graph visualization">
                   {/* Edges */}
                   {graphData?.edges.map((edge, idx) => {
                     const src = nodes2D.find(n => n.id === edge.source);
