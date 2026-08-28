@@ -13,18 +13,27 @@ statistics and a Label. That means:
     returned DataFrame (don't index it).
   - There is no per-flow timestamp. Rows are written in capture order per
     file, so we synthesize a monotonically increasing `timestamp` by
-    anchoring each file to its capture day (per the CIC-IDS-2017 paper, the
-    five days run Monday-Friday, 2017-07-03 through 2017-07-07, 09:00 local)
-    and walking forward by each row's own Flow Duration. This is good enough
-    for time-windowed aggregation but is NOT wall-clock-accurate — use the
-    matching raw PCAP (src/ingestion/packet_parser.py) wherever real IPs or
-    real timestamps matter (e.g. building the live host graph).
+    anchoring each file to a start time and walking forward by each row's
+    own Flow Duration.
+
+    That anchor is the file's real weakness: by default it's a *guess* (per
+    the CIC-IDS-2017 paper, the five days run Monday-Friday, 2017-07-03
+    through 2017-07-07, "around 09:00 local"). Pass `pcap_path` (or
+    `pcap_dir` to `load_flow_dir`) when you have the matching raw PCAP —
+    then the anchor becomes that capture's *real* first-packet timestamp
+    instead of a guess, which is strictly better. It does NOT make every
+    row's timestamp exactly right, though: we still don't know each flow's
+    true individual start time, only the file's real start, so interior
+    rows are still a walked approximation (and flows that genuinely
+    overlapped in real time get serialized here, since the source data
+    gives no way to tell). Good enough for windowed aggregation; still not
+    a substitute for real per-flow timestamps.
 """
 
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -79,12 +88,36 @@ def _snake_case(col: str) -> str:
     return col.lower()
 
 
-def _day_start_for(path: str) -> tuple[str, datetime]:
-    name = Path(path).stem.lower()
-    for day, start in _DAY_START.items():
-        if name.startswith(day):
-            return day, start
-    return "unknown", datetime(2017, 7, 3, 9, 0, 0)
+def _day_start_for(csv_path: str, pcap_path: str | None = None) -> tuple[str, datetime]:
+    name = Path(csv_path).stem.lower()
+    day = next((d for d in _DAY_START if name.startswith(d)), "unknown")
+    guessed_start = _DAY_START.get(day, datetime(2017, 7, 3, 9, 0, 0))
+
+    if pcap_path is None:
+        return day, guessed_start
+
+    # Lazy import: keeps flow_parser usable (CSV-only) without scapy
+    # installed when no real PCAP anchor is requested.
+    from src.ingestion.packet_parser import first_packet_timestamp
+
+    try:
+        epoch = first_packet_timestamp(pcap_path)
+    except (OSError, ValueError):
+        return day, guessed_start  # fall back to the guess rather than fail the whole load
+    real_start = datetime.fromtimestamp(epoch, tz=timezone.utc).replace(tzinfo=None)
+    return day, real_start
+
+
+def _guess_pcap_path(csv_path: str, pcap_dir: str) -> Path | None:
+    """CIC-IDS-2017 naming: '<Day>-WorkingHours.pcap_ISCX.csv' pairs with
+    '<Day>-WorkingHours.pcap' (note the differing case on some files,
+    e.g. Wednesday-workingHours). Returns None if no match exists on disk."""
+    stem = Path(csv_path).stem  # "Monday-WorkingHours.pcap_ISCX"
+    base = stem.split(".pcap")[0]  # "Monday-WorkingHours"
+    for candidate in Path(pcap_dir).glob("*.pcap*"):
+        if candidate.stem.lower() == base.lower() or candidate.name.lower().startswith(base.lower() + "."):
+            return candidate
+    return None
 
 
 def _normalize_chunk(chunk: pd.DataFrame, source_day: str, day_start: datetime, source_file: str) -> pd.DataFrame:
@@ -123,30 +156,44 @@ def _normalize_chunk(chunk: pd.DataFrame, source_day: str, day_start: datetime, 
     return chunk
 
 
-def iter_flow_csv(path: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
+def iter_flow_csv(path: str, chunksize: int = 50_000, pcap_path: str | None = None) -> Iterator[pd.DataFrame]:
     """Stream-normalize a MachineLearningCVE CSV in chunks.
 
     Yields one normalized DataFrame per `chunksize` rows so a caller (the
     orchestrator) can emit a stage:ingestion progress event per batch
     instead of blocking until the whole file is loaded.
+
+    Pass `pcap_path` (the matching raw capture, e.g.
+    data/raw/PCAP/Monday-WorkingHours.pcap) to anchor the synthesized
+    `timestamp` column to that capture's real start time instead of the
+    generic per-weekday guess — see the module docstring for what this
+    does and doesn't fix.
     """
-    source_day, day_start = _day_start_for(path)
+    source_day, day_start = _day_start_for(path, pcap_path=pcap_path)
     source_file = Path(path).name
     for raw_chunk in pd.read_csv(path, chunksize=chunksize, low_memory=False):
         yield _normalize_chunk(raw_chunk, source_day, day_start, source_file)
 
 
-def load_flow_csv(path: str) -> pd.DataFrame:
-    """Load and normalize a full MachineLearningCVE CSV into one DataFrame."""
-    chunks = list(iter_flow_csv(path, chunksize=200_000))
+def load_flow_csv(path: str, pcap_path: str | None = None) -> pd.DataFrame:
+    """Load and normalize a full MachineLearningCVE CSV into one DataFrame.
+    See iter_flow_csv for what `pcap_path` does."""
+    chunks = list(iter_flow_csv(path, chunksize=200_000, pcap_path=pcap_path))
     if not chunks:
         return pd.DataFrame()
     return pd.concat(chunks, ignore_index=True)
 
 
-def load_flow_dir(dir_path: str) -> pd.DataFrame:
-    """Load every *.csv in a MachineLearningCVE-style directory and concat them."""
-    frames = [load_flow_csv(str(p)) for p in sorted(Path(dir_path).glob("*.csv"))]
+def load_flow_dir(dir_path: str, pcap_dir: str | None = None) -> pd.DataFrame:
+    """Load every *.csv in a MachineLearningCVE-style directory and concat
+    them. If `pcap_dir` is given, each CSV is anchored to its matching raw
+    PCAP's real start time when one exists there (e.g. Monday/Wednesday in
+    this project); CSVs without a matching PCAP fall back to the guessed
+    anchor, same as always."""
+    frames = []
+    for csv_path in sorted(Path(dir_path).glob("*.csv")):
+        pcap_path = _guess_pcap_path(str(csv_path), pcap_dir) if pcap_dir else None
+        frames.append(load_flow_csv(str(csv_path), pcap_path=str(pcap_path) if pcap_path else None))
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)

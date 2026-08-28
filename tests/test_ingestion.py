@@ -37,6 +37,55 @@ def test_load_flow_csv_normalizes_schema(tmp_path):
     assert pd.Series(df["timestamp"]).is_monotonic_increasing
 
 
+def test_load_flow_csv_anchors_to_real_pcap_start(tmp_path):
+    csv_path = tmp_path / "Monday-WorkingHours.pcap_ISCX.csv"
+    csv_path.write_text(CSV_COLUMNS + "\n" + "\n".join(CSV_ROWS) + "\n")
+
+    pcap_path = tmp_path / "Monday-WorkingHours.pcap"
+    pkt = Ether() / IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=1234, dport=80, seq=1)
+    pkt.time = 1600000000.0  # a real, arbitrary, easy-to-check epoch
+    wrpcap(str(pcap_path), [pkt])
+
+    df = flow_parser.load_flow_csv(str(csv_path), pcap_path=str(pcap_path))
+
+    from datetime import datetime, timezone
+    expected_start = datetime.fromtimestamp(1600000000.0, tz=timezone.utc).replace(tzinfo=None)
+    assert df["timestamp"].iloc[0] == expected_start
+
+
+def test_load_flow_csv_falls_back_to_guess_when_pcap_missing(tmp_path):
+    csv_path = tmp_path / "Monday-WorkingHours.pcap_ISCX.csv"
+    csv_path.write_text(CSV_COLUMNS + "\n" + "\n".join(CSV_ROWS) + "\n")
+
+    df = flow_parser.load_flow_csv(str(csv_path), pcap_path=str(tmp_path / "does_not_exist.pcap"))
+
+    assert df["timestamp"].iloc[0].year == 2017  # unchanged: the generic per-weekday guess
+
+
+def test_load_flow_dir_matches_csvs_to_pcaps_by_name(tmp_path):
+    csv_dir = tmp_path / "CSV"
+    pcap_dir = tmp_path / "PCAP"
+    csv_dir.mkdir()
+    pcap_dir.mkdir()
+
+    (csv_dir / "Monday-WorkingHours.pcap_ISCX.csv").write_text(CSV_COLUMNS + "\n" + CSV_ROWS[0] + "\n")
+    (csv_dir / "Tuesday-WorkingHours.pcap_ISCX.csv").write_text(CSV_COLUMNS + "\n" + CSV_ROWS[1] + "\n")
+
+    pkt = Ether() / IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=1234, dport=80, seq=1)
+    pkt.time = 1600000000.0
+    wrpcap(str(pcap_dir / "Monday-WorkingHours.pcap"), [pkt])
+    # deliberately no Tuesday pcap -> that CSV should fall back to the guess
+
+    df = flow_parser.load_flow_dir(str(csv_dir), pcap_dir=str(pcap_dir))
+
+    from datetime import datetime, timezone
+    expected_start = datetime.fromtimestamp(1600000000.0, tz=timezone.utc).replace(tzinfo=None)
+    monday_row = df[df["source_day"] == "monday"].iloc[0]
+    tuesday_row = df[df["source_day"] == "tuesday"].iloc[0]
+    assert monday_row["timestamp"] == expected_start
+    assert tuesday_row["timestamp"].year == 2017
+
+
 def test_iter_flow_csv_batches_sum_to_full_file(tmp_path):
     csv_path = tmp_path / "Tuesday-WorkingHours.pcap_ISCX.csv"
     csv_path.write_text(CSV_COLUMNS + "\n" + "\n".join(CSV_ROWS) + "\n")

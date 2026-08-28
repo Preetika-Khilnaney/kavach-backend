@@ -111,6 +111,20 @@ def _record_from_packet(pkt, flow_states: dict, scan_states: dict) -> dict | Non
     }
 
 
+def first_packet_timestamp(path: str) -> float:
+    """Return the epoch-seconds timestamp of the first packet in a capture.
+
+    Cheap even on the multi-GB captures in this project since PcapReader
+    streams — this stops after one packet. Used by flow_parser.py to anchor
+    a MachineLearningCVE CSV's synthesized timestamps to this capture's
+    real start time, when the matching raw PCAP is available.
+    """
+    with PcapReader(path) as reader:
+        for pkt in reader:
+            return float(pkt.time)
+    raise ValueError(f"No packets found in {path!r}")
+
+
 def iter_packets(path: str, batch_size: int = 5_000, max_packets: int | None = None) -> Iterator[list[dict]]:
     """Stream a capture and yield lists of `batch_size` normalized packet
     records at a time, so the orchestrator can emit a stage:ingestion
