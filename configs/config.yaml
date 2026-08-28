@@ -1,6 +1,12 @@
 data:
-  cic_ids_2018_dir: "data/raw/cic_ids_2018"
-  ctu_13_dir: "data/raw/ctu_13"
+  # CIC-IDS-2017 "MachineLearningCVE" flow CSVs (Monday-Friday, all attack
+  # days). See src/ingestion/flow_parser.py for the schema caveats (no
+  # src/dst IP, synthesized timestamps).
+  flow_csv_dir: "data/raw/CSV/MachineLearningCVE"
+  # Raw PCAPNG captures — currently Monday (benign baseline) and Wednesday
+  # (DoS/DDoS-heavy). Too large for git; linked from the README, expected
+  # to land here manually.
+  pcap_dir: "data/raw/PCAP"
   processed_dir: "data/processed"
 
 windowing:

@@ -32,18 +32,23 @@ async def upload_capture(file: UploadFile = File(...)):
 
 
 @app.websocket("/ws/pipeline")
-async def pipeline_stream(websocket: WebSocket):
+async def pipeline_stream(websocket: WebSocket, capture_path: str | None = None):
     """Streams pipeline stage events as the orchestrator runs, matching the
     event schema from the backend architecture doc:
         {"stage": ..., "window_id": ..., "timestamp": ..., "payload": ..., "status": ...}
 
-    Currently runs on placeholder data (see src/orchestrator/pipeline.py) so
-    the frontend's Model Internals view can be built against a real event
-    stream before the model itself is trained.
+    Pass `capture_path` (the `path` returned by POST /ingest/upload) as a
+    query param, e.g. `ws://localhost:8000/ws/pipeline?capture_path=data/raw/uploads/foo.csv`,
+    to run ingestion over that file. Omit it to run the placeholder demo
+    stream. Ingestion is real for both .csv (flow_parser) and .pcap/.pcapng
+    (packet_parser); every stage after it is still placeholder data (see
+    src/orchestrator/pipeline.py) so the frontend's Model Internals view can
+    be built against a real event stream before the rest of the pipeline
+    exists.
     """
     await websocket.accept()
     try:
-        async for event in run_pipeline():
+        async for event in run_pipeline(capture_path=capture_path):
             await websocket.send_json(event)
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
