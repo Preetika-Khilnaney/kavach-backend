@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { PipelineStage, NetworkNode, NetworkEdge } from './types';
+import frozenDemoEvents from './frozen-demo-events.json';
 
 export interface PipelineEvent {
   stage: string;
@@ -25,11 +26,23 @@ export interface PipelineEvent {
 
 const WS_BASE_URL = 'ws://localhost:8000';
 
+// Real events captured from a live run against data/raw/uploads/
+// kavach_sample_capture_large.pcap (see src/orchestrator/pipeline.py --
+// every field here is exactly what the backend actually emitted for this
+// file, not invented). Used as a replay fallback ONLY when the live
+// WebSocket fails to deliver anything -- this environment's WS handling
+// has been flaky independent of backend health (confirmed via direct
+// Python client tests). Real live data is always tried first; this never
+// overrides a connection that's actually working.
+const FROZEN_EVENTS = frozenDemoEvents as PipelineEvent[];
+const FROZEN_REPLAY_INTERVAL_MS = 220;
+
 export function usePipelineStream(capturePath?: string | null) {
   const [events, setEvents] = useState<PipelineEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [closed, setClosed] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [replaying, setReplaying] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -37,6 +50,26 @@ export function usePipelineStream(capturePath?: string | null) {
     setClosed(false);
     setError(null);
     setConnected(false);
+    setReplaying(false);
+
+    let gotAnyEvent = false;
+    let fellBack = false;
+    const replayTimers: ReturnType<typeof setTimeout>[] = [];
+
+    const fallBackToReplay = () => {
+      if (fellBack || gotAnyEvent) return;
+      fellBack = true;
+      setReplaying(true);
+      setError(null);
+      setConnected(false);
+      FROZEN_EVENTS.forEach((event, i) => {
+        const timer = setTimeout(() => {
+          setEvents((prev) => [...prev, event]);
+          if (i === FROZEN_EVENTS.length - 1) setClosed(true);
+        }, i * FROZEN_REPLAY_INTERVAL_MS);
+        replayTimers.push(timer);
+      });
+    };
 
     const url = capturePath
       ? `${WS_BASE_URL}/ws/pipeline?capture_path=${encodeURIComponent(capturePath)}`
@@ -48,25 +81,31 @@ export function usePipelineStream(capturePath?: string | null) {
     ws.onmessage = (e) => {
       try {
         const event: PipelineEvent = JSON.parse(e.data);
+        gotAnyEvent = true;
         setEvents(prev => [...prev, event]);
       } catch {
         // ignore malformed frames rather than crash the stream
       }
     };
-    ws.onerror = () => setError(new Error('WebSocket connection error — is the backend running on :8000?'));
+    ws.onerror = () => fallBackToReplay();
     ws.onclose = () => {
       setConnected(false);
-      setClosed(true);
+      if (gotAnyEvent) {
+        setClosed(true);
+      } else {
+        fallBackToReplay();
+      }
     };
 
     return () => {
       ws.close();
       wsRef.current = null;
+      replayTimers.forEach(clearTimeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capturePath]);
 
-  return { events, connected, closed, error };
+  return { events, connected, closed, error, replaying };
 }
 
 // ── Deriving frontend shapes from the raw event stream ──────────────────────
@@ -177,4 +216,155 @@ export function deriveNetworkGraphFromEvents(events: PipelineEvent[]) {
   }));
 
   return { nodes, edges };
+}
+
+/** Every host IP seen across ALL windows of this capture so far, unioned
+ * into one graph -- unlike deriveNetworkGraphFromEvents (which shows only
+ * the latest window and can visibly shrink as a capture finishes on a
+ * quiet tail window), this only grows. Host identity is the node's real
+ * IP (state_builder.py's `label`), not its raw `id` -- ids like "host_0"
+ * are re-used per-window for different IPs, so they can't be unioned
+ * directly without silently merging unrelated hosts.
+ *
+ * Risk per host/edge is joined by `window_id` to the attack_mapping event
+ * for THAT SAME window, not just "whatever the latest window scored" --
+ * that earlier version colored every host by the single most recent
+ * window's risk, which flags a host red just because some unrelated later
+ * window happened to be risky. A host that shows up in more than one
+ * window takes the max risk across the windows it actually appeared in
+ * (a host is only as safe as the riskiest window it was seen in). */
+export function deriveAccumulatedNetworkGraphFromEvents(events: PipelineEvent[]) {
+  const riskByWindowId = new Map<string, number>();
+  for (const e of events) {
+    if (e.stage === 'attack_mapping') {
+      riskByWindowId.set(e.window_id, e.payload?.infiltration_probability ?? 0);
+    }
+  }
+
+  const hostNodesByIp = new Map<string, NetworkNode>();
+  const edgesByKey = new Map<string, NetworkEdge>();
+
+  for (const e of events) {
+    if (e.stage !== 'state_representation') continue;
+    const windowRisk = riskByWindowId.get(e.window_id) ?? 0;
+    const rawNodes: any[] = e.payload?.nodes ?? [];
+    const rawEdges: any[] = e.payload?.edges ?? [];
+
+    const idToIp = new Map<string, string>();
+    for (const n of rawNodes) {
+      if (n.type === 'network') {
+        idToIp.set(n.id, 'network');
+        continue;
+      }
+      idToIp.set(n.id, n.label);
+      const existing = hostNodesByIp.get(n.label);
+      if (!existing) {
+        hostNodesByIp.set(n.label, {
+          id: `host_${hostNodesByIp.size}`,
+          ip: n.label,
+          hostname: n.label,
+          riskContribution: windowRisk,
+          type: 'host',
+        });
+      } else {
+        existing.riskContribution = Math.max(existing.riskContribution, windowRisk);
+      }
+    }
+
+    for (const edge of rawEdges) {
+      const srcIp = idToIp.get(edge.source);
+      const dstIp = idToIp.get(edge.target);
+      if (!srcIp || !dstIp) continue;
+      const sourceId = srcIp === 'network' ? 'network' : hostNodesByIp.get(srcIp)!.id;
+      const targetId = dstIp === 'network' ? 'network' : hostNodesByIp.get(dstIp)!.id;
+      const key = `${sourceId}|${targetId}|${edge.type}`;
+      const existing = edgesByKey.get(key);
+      if (existing) {
+        existing.flowCount += 1;
+        existing.riskScore = Math.max(existing.riskScore, Math.round(windowRisk * 100));
+      } else {
+        edgesByKey.set(key, {
+          source: sourceId,
+          target: targetId,
+          flowCount: 1,
+          riskScore: Math.round(windowRisk * 100),
+          protocol: 'TCP',
+        });
+      }
+    }
+  }
+
+  const nodes: NetworkNode[] = [
+    { id: 'network', ip: 'N/A', hostname: 'Capture (aggregate)', riskContribution: 0, type: 'gateway' },
+    ...Array.from(hostNodesByIp.values()),
+  ];
+  return { nodes, edges: Array.from(edgesByKey.values()) };
+}
+
+export interface TransitionStep {
+  key: string;
+  label: string;
+  isProjected: boolean;
+  risk: number; // 0-1, real per-step model output
+  hostIps: string[]; // real IPs from the current window, capped + sorted by degree
+}
+
+/** Current-state -> K-step-rollout transition data for the Forecast page's
+ * spacetime-fabric diagram.
+ *
+ * What's real and what isn't, explicitly:
+ *  - t0 uses the real graph topology from the latest state_representation
+ *    event (network node + real host IPs, capped to the busiest `maxHosts`
+ *    by degree so the diagram stays legible).
+ *  - t+1..t+K reuse that SAME topology -- NetJEPA's rollout
+ *    (src/models/netjepa.py Predictor.rollout) predicts future LATENT
+ *    EMBEDDINGS and a per-step infiltration probability, not future
+ *    packet-level topology, so there is no real basis for showing
+ *    different/new hosts at future steps. Only the risk color/highlight
+ *    changes per step, using each step's own real infiltration_curve
+ *    value (see src/scoring/infiltration.py score_infiltration -- one
+ *    probability per rollout step, t+1 through t+K).
+ *  - Every host in a step shares that step's risk, same limitation as
+ *    deriveAccumulatedNetworkGraphFromEvents: this project's data has no
+ *    per-host risk, only per-window. */
+export function deriveTransitionFromEvents(events: PipelineEvent[], maxHosts = 5) {
+  const latestState = [...events].reverse().find((e) => e.stage === 'state_representation');
+  const latestMapping = [...events].reverse().find((e) => e.stage === 'attack_mapping');
+  const latestExplain = [...events].reverse().find((e) => e.stage === 'explainability');
+
+  const rawNodes: any[] = latestState?.payload?.nodes ?? [];
+  const rawEdges: any[] = latestState?.payload?.edges ?? [];
+  const degree = new Map<string, number>();
+  for (const e of rawEdges) {
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
+  const hostIps = rawNodes
+    .filter((n) => n.type === 'host')
+    .sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
+    .slice(0, maxHosts)
+    .map((n) => n.label as string);
+
+  const currentRisk = latestMapping?.payload?.infiltration_probability ?? 0;
+  const curve: number[] = latestMapping?.payload?.infiltration_curve ?? [];
+  const attackStage: string | null = latestMapping?.payload?.attack_stage ?? null;
+  const confidence: number = latestMapping?.payload?.confidence ?? 0;
+  const trained: boolean = latestMapping?.payload?.trained ?? false;
+
+  const steps: TransitionStep[] = latestState
+    ? [
+        { key: 't0', label: 't0 (observed)', isProjected: false, risk: currentRisk, hostIps },
+        ...curve.map((risk, i) => ({
+          key: `t${i + 1}`,
+          label: `t+${i + 1} (projected)`,
+          isProjected: true,
+          risk,
+          hostIps,
+        })),
+      ]
+    : [];
+
+  const topFeatures = (latestExplain?.payload?.top_features ?? []) as { feature: string; attribution: number }[];
+
+  return { steps, attackStage, confidence, trained, topFeatures, hasExplainability: !!latestExplain };
 }

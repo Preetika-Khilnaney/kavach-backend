@@ -9,6 +9,10 @@ interface MonoLogLineProps {
   flowId?: string;
   className?: string;
   animate?: boolean;
+  /** Entrance delay in seconds, so a list can reveal items one after another instead of all at once. */
+  delay?: number;
+  /** Entrance animation duration in seconds. */
+  duration?: number;
   onClick?: () => void;
   children?: React.ReactNode;
 }
@@ -26,6 +30,8 @@ export function MonoLogLine({
   flowId,
   className,
   animate = false,
+  delay = 0,
+  duration = 0.3,
   onClick,
   children,
 }: MonoLogLineProps) {
@@ -80,7 +86,7 @@ export function MonoLogLine({
       <motion.div
         initial={{ opacity: 0, x: -16, height: 0 }}
         animate={{ opacity: 1, x: 0, height: 'auto' }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ duration, delay, ease: [0.22, 1, 0.36, 1] }}
       >
         {content}
       </motion.div>

@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { GitBranch, Sparkles, Radio, Table } from 'lucide-react';
-import { usePipelineStream } from '../api/websocket';
+import { GitBranch, Sparkles, Radio, Table, Waypoints } from 'lucide-react';
+import { usePipelineStream, deriveTransitionFromEvents } from '../api/websocket';
+import { TransitionDiagram } from '../three/TransitionDiagram';
+import { ExplainabilityPanel } from '../components/ExplainabilityPanel';
 import { DataStateWrapper } from '../components/DataStateWrapper';
 import { InternalsSubNav } from '../components/InternalsSubNav';
+import type { FeatureAttribution } from '../api/types';
 import clsx from 'clsx';
 
 const CHART_WIDTH = 700;
@@ -41,9 +44,34 @@ export function InternalsForecast() {
   // in as the next step) -- not a branching tree with real alternative
   // probabilities, so unlike the original mock, this shows a single real
   // path instead of fabricated alt-branches.
-  const { events, connected, closed, error: wsError } = usePipelineStream(capturePath);
+  const { events, connected, closed, error: wsError, replaying } = usePipelineStream(capturePath);
   const loading = events.length === 0 && !closed && !wsError;
   const error = wsError;
+
+  // Current-state -> K-step-rollout transition diagram, driven by the
+  // exact same real events -- see deriveTransitionFromEvents' docstring
+  // for exactly what is and isn't real here (real topology reused across
+  // steps, real per-step risk, no fabricated future hosts).
+  const transition = useMemo(() => deriveTransitionFromEvents(events, 5), [events]);
+  const explainFeatures: FeatureAttribution[] = useMemo(
+    () =>
+      transition.topFeatures.map((f) => ({
+        featureName: f.feature,
+        value: f.attribution,
+        contribution: f.attribution,
+        direction: f.attribution >= 0 ? 'positive' : 'negative',
+      })),
+    [transition.topFeatures],
+  );
+  const finalStep = transition.steps[transition.steps.length - 1];
+  const explainSummary = !transition.trained
+    ? 'The model has no trained weights yet, so this attribution is not meaningful.'
+    : explainFeatures.length > 0
+      ? `NetJEPA's rollout projects infiltration probability reaching ${Math.round((finalStep?.risk ?? 0) * 100)}% by ${finalStep?.label ?? 'the final step'}, mapped to the '${transition.attackStage ?? 'unknown'}' MITRE stage at ${Math.round((transition.confidence ?? 0) * 100)}% confidence. The strongest signals driving that read were ${explainFeatures
+          .slice(0, 2)
+          .map((f) => f.featureName)
+          .join(' and ')}.`
+      : `No feature attribution for this window — Kavach only computes it above a 30% infiltration-probability threshold, and this window hasn't crossed that.`;
 
   const latestMapping = useMemo(() => [...events].reverse().find((e) => e.stage === 'attack_mapping'), [events]);
   const trained = latestMapping?.payload?.trained ?? false;
@@ -80,11 +108,16 @@ export function InternalsForecast() {
             <span
               className={clsx(
                 'flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full border',
-                connected ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle' : 'text-text-tertiary border-border-default bg-canvas'
+                connected
+                  ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle'
+                  : replaying
+                    ? 'text-risk-amber border-risk-amber/40 bg-risk-amber-subtle'
+                    : 'text-text-tertiary border-border-default bg-canvas'
               )}
+              title={replaying ? 'Live WebSocket unavailable — replaying a real captured run for this file' : undefined}
             >
               <Radio size={10} className={connected ? 'animate-pulse' : ''} />
-              {connected ? 'LIVE STREAM' : closed ? 'STREAM CLOSED' : 'CONNECTING…'}
+              {connected ? 'LIVE STREAM' : replaying ? 'REPLAY (cached run)' : closed ? 'STREAM CLOSED' : 'CONNECTING…'}
             </span>
           </div>
           <p className="text-xs text-text-secondary mt-0.5">
@@ -129,6 +162,28 @@ export function InternalsForecast() {
       </div>
 
       <InternalsSubNav active="forecast" />
+
+      {/* State Transition Diagram -- current state -> K predicted future
+          states, spacetime-fabric style, fading with distance from t0 */}
+      <DataStateWrapper state={loading ? 'loading' : error ? 'error' : 'live'}>
+        <div className="bg-surface border border-border-default rounded-2xl p-6 shadow-card space-y-4">
+          <div className="flex items-center gap-2">
+            <Waypoints size={16} className="text-accent-indigo" aria-hidden="true" />
+            <h3 className="font-heading font-semibold text-sm text-text-primary">
+              State Transition — Observed to Projected
+            </h3>
+          </div>
+          {transition.steps.length > 0 ? (
+            <TransitionDiagram steps={transition.steps} />
+          ) : (
+            <div className="h-[420px] flex items-center justify-center bg-canvas rounded-xl border border-border-default">
+              <p className="text-xs text-text-secondary">No window processed yet — waiting on the first state_representation event.</p>
+            </div>
+          )}
+
+          <ExplainabilityPanel topFeatures={explainFeatures} summary={explainSummary} />
+        </div>
+      </DataStateWrapper>
 
       {/* Main Rollout Canvas */}
       <DataStateWrapper state={loading ? 'loading' : error ? 'error' : 'live'}>

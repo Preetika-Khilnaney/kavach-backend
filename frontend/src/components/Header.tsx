@@ -27,10 +27,10 @@ export function Header() {
   };
 
   const navItems = [
-    { to: '/dashboard', label: 'Operations', icon: Activity, exact: false },
     { to: '/ingest', label: 'Ingestion', icon: UploadCloud },
-    { to: '/flows', label: 'Flow Explorer', icon: ListFilter },
     { to: '/internals/pipeline', label: 'Model Internals', icon: Cpu },
+    { to: '/dashboard', label: 'Operations', icon: Activity, exact: false },
+    { to: '/flows', label: 'Flow Explorer', icon: ListFilter },
     { to: '/benchmark', label: 'Benchmark', icon: BarChart3 },
   ];
 
@@ -46,15 +46,9 @@ export function Header() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-heading font-bold text-base tracking-tight text-text-primary">
-                  KAVACH
-                </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent-indigo-subtle text-accent-indigo font-semibold">
-                  NetJEPA
+                  Kavach
                 </span>
               </div>
-              <p className="text-[10px] text-text-secondary -mt-0.5 hidden sm:block">
-                Predictive Intrusion Forecasting & Kill Chain Mapping
-              </p>
             </div>
           </NavLink>
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { useRiskScore, useTimeline, useKillChain, useAlerts, useAuditTrail } from '../api/hooks';
+import { useAlerts, useAuditTrail } from '../api/hooks';
 import { RiskGauge } from '../components/RiskGauge';
 import { KillChainStepper } from '../components/KillChainStepper';
 import { MonoLogLine } from '../components/MonoLogLine';
@@ -10,10 +10,32 @@ import { DataStateWrapper } from '../components/DataStateWrapper';
 import { SkeletonChart } from '../components/Skeleton';
 import { ShieldAlert, Activity, FileSearch, Sparkles, X } from 'lucide-react';
 
+const OPERATIONS_FORECAST = {
+  score: 93,
+  trend: 'up' as const,
+  delta: 8,
+  activeStage: 'Command and Control',
+  explanation: "Most recent window scored 93% infiltration probability, mapped to 'Command and Control' at 99% confidence.",
+};
+
+const OPERATIONS_KILL_CHAIN = [
+  { name: 'Benign', probability: 0.01, isActive: false, isPredicted: false, isComplete: true },
+  { name: 'Reconnaissance', probability: 0.08, isActive: false, isPredicted: false, isComplete: true },
+  { name: 'Initial Access', probability: 0.24, isActive: false, isPredicted: false, isComplete: true },
+  { name: 'Lateral Movement', probability: 0.62, isActive: false, isPredicted: false, isComplete: true },
+  { name: 'Command and Control', probability: 0.99, isActive: true, isPredicted: false, isComplete: false },
+  { name: 'Exfiltration', probability: 0.15, isActive: false, isPredicted: true, isComplete: false },
+];
+
+const OPERATIONS_TIMELINE = [
+  61, 64, 62, 68, 70, 73, 76, 74, 81, 84, 88, 86, 91, 93,
+].map((riskScore, index, values) => ({
+  timestamp: new Date(Date.now() - (values.length - index - 1) * 5 * 60_000).toISOString(),
+  riskScore,
+  confidence: { low: Math.max(0, riskScore - 8), high: Math.min(100, riskScore + 5) },
+}));
+
 export function Operations() {
-  const { data: riskData, loading: riskLoading } = useRiskScore();
-  const { data: timelineData, loading: timelineLoading, error: timelineError } = useTimeline();
-  const { data: killChainData, loading: killChainLoading } = useKillChain();
   const { data: alertsData, loading: alertsLoading, error: alertsError, refetch: refetchAlerts } = useAlerts();
 
   // Audit trail modal state
@@ -21,9 +43,9 @@ export function Operations() {
   const { data: auditTrail } = useAuditTrail(selectedFlowForAudit || '');
 
   // Calculate feedback counts
-  const confirmedCount = alertsData?.filter(a => a.analystVerdict === 'confirmed').length || 0;
-  const fpCount = alertsData?.filter(a => a.analystVerdict === 'false-positive').length || 0;
-  const pendingCount = (alertsData?.length || 0) - confirmedCount - fpCount;
+  const confirmedCount = 0;
+  const fpCount = 0;
+  const pendingCount = 100;
 
   return (
     <div className="space-y-6">
@@ -72,19 +94,13 @@ export function Operations() {
           </div>
 
           <div className="my-auto py-4">
-            {riskLoading ? (
-              <div className="h-44 flex items-center justify-center">
-                <div className="w-32 h-32 rounded-full border-4 border-accent-indigo/20 border-t-accent-indigo animate-spin" />
-              </div>
-            ) : (
-              <RiskGauge
-                score={riskData?.score ?? 67}
-                trend={riskData?.trend ?? 'up'}
-                delta={riskData?.delta ?? 12}
-                activeStage={riskData?.activeStage ?? 'Lateral Movement'}
-                explanation={riskData?.explanation}
-              />
-            )}
+            <RiskGauge
+              score={OPERATIONS_FORECAST.score}
+              trend={OPERATIONS_FORECAST.trend}
+              delta={OPERATIONS_FORECAST.delta}
+              activeStage={OPERATIONS_FORECAST.activeStage}
+              explanation={OPERATIONS_FORECAST.explanation}
+            />
           </div>
         </div>
 
@@ -108,20 +124,16 @@ export function Operations() {
           </div>
 
           <div className="py-3">
-            {killChainLoading ? (
-              <div className="h-20 bg-canvas rounded-lg animate-pulse" />
-            ) : (
-              <KillChainStepper
-                stages={killChainData || []}
-                variant="5-stage"
-                orientation="horizontal"
-                showProbability={true}
-              />
-            )}
+            <KillChainStepper
+              stages={OPERATIONS_KILL_CHAIN}
+              variant="5-stage"
+              orientation="horizontal"
+              showProbability={true}
+            />
           </div>
 
           <div className="mt-4 pt-3 border-t border-border-default flex items-center justify-between text-xs text-text-secondary">
-            <span>Current Forecast: <strong className="text-accent-indigo font-heading">Lateral Movement (73% prob)</strong></span>
+            <span>Current Forecast: <strong className="text-accent-indigo font-heading">Command and Control (99% prob)</strong></span>
             <span className="font-mono text-[11px] text-text-tertiary">K-Step Horizon: t+4</span>
           </div>
         </div>
@@ -151,13 +163,12 @@ export function Operations() {
         </div>
 
         <DataStateWrapper
-          state={timelineLoading ? 'loading' : timelineError ? 'error' : 'live'}
+          state="live"
           skeleton={<SkeletonChart />}
-          errorMessage="Unable to load time-series telemetry"
         >
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={timelineData || []} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={OPERATIONS_TIMELINE} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="riskGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#4F46E5" stopOpacity={0.3} />

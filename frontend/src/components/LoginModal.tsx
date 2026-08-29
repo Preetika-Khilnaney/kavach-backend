@@ -1,8 +1,12 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { X, LogIn, Sparkles } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { X, User, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import loginBackground from '../assets/login-background.png';
 import clsx from 'clsx';
 
 interface LoginModalProps {
@@ -10,29 +14,68 @@ interface LoginModalProps {
   onClose: () => void;
 }
 
+const KAVACH_LETTERS = 'Kavach'.split('');
+const FLY_IN_DURATION = 1.1;
+
+/** Right-panel wordmark: flies in rotating from the top-right corner, settles
+ * center, then each letter hops up in sequence and comes to rest. */
+function AnimatedKavachWordmark() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true">
+      <motion.div
+        initial={{ x: 140, y: -120, rotate: -70, opacity: 0 }}
+        animate={{ x: 0, y: 0, rotate: 0, opacity: 1 }}
+        transition={{ duration: FLY_IN_DURATION, ease: [0.16, 1, 0.3, 1] }}
+        className="flex"
+      >
+        {KAVACH_LETTERS.map((letter, idx) => (
+          <motion.span
+            key={idx}
+            initial={{ y: 0 }}
+            animate={{ y: [0, -16, 0] }}
+            transition={{
+              duration: 0.5,
+              delay: FLY_IN_DURATION + idx * 0.1,
+              times: [0, 0.5, 1],
+              ease: 'easeOut',
+            }}
+            className="font-heading font-bold text-white text-6xl tracking-tight inline-block"
+          >
+            {letter}
+          </motion.span>
+        ))}
+      </motion.div>
+    </div>
+  );
+}
+
 /**
  * STUB LOGIN MODAL
- * 
+ *
  * UI-only login form for demo purposes. No real authentication backend.
  * In production, this would connect to real auth endpoints with proper
  * validation, error handling, and security measures.
  */
 export function LoginModal({ isOpen, onClose }: LoginModalProps) {
   const { login, loginAsDemo } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+
   const containerRef = useFocusTrap(isOpen);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
+
     try {
       // STUB: This accepts any credentials for demo purposes
       await login(email, password);
       onClose();
+      navigate('/ingest');
       setEmail('');
       setPassword('');
     } catch (error) {
@@ -46,6 +89,7 @@ export function LoginModal({ isOpen, onClose }: LoginModalProps) {
   const handleDemoLogin = () => {
     loginAsDemo();
     onClose();
+    navigate('/ingest');
   };
 
   const handleClose = () => {
@@ -56,124 +100,135 @@ export function LoginModal({ isOpen, onClose }: LoginModalProps) {
 
   if (!isOpen) return null;
 
-  return (
-    <>
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleClose}>
       {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50"
-        onClick={handleClose}
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-xs" aria-hidden="true" />
 
-      {/* Modal - Fixed positioning with proper centering */}
+      {/* Modal */}
       <div
         ref={containerRef}
         role="dialog"
-        aria-labelledby="login-modal-title"
+        aria-label="Sign in to Kavach"
         aria-modal="true"
-        className="fixed inset-4 sm:top-[10%] sm:left-1/2 sm:-translate-x-1/2 sm:inset-auto z-50 bg-surface rounded-2xl border border-border-default shadow-panel w-full sm:max-w-md max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        className="relative z-10 bg-surface rounded-2xl border border-border-default shadow-panel w-full sm:w-[880px] max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col sm:flex-row"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-border-default">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-accent-indigo flex items-center justify-center text-white shadow-glow-indigo">
-              <LogIn size={20} />
-            </div>
-            <div>
-              <h2 id="login-modal-title" className="font-heading font-bold text-base text-text-primary">
-                Sign in to Kavach
-              </h2>
-              <p className="text-xs text-text-secondary mt-0.5">
-                Predictive Intrusion Forecasting System
-              </p>
-            </div>
-          </div>
+        {/* Left: Form */}
+        <div className="relative w-full sm:w-[380px] shrink-0 p-8 overflow-y-auto">
           <button
             type="button"
             onClick={handleClose}
             aria-label="Close login dialog"
             data-interactive
-            className="p-1 rounded hover:bg-canvas text-text-tertiary hover:text-text-primary transition-colors"
+            className="absolute top-4 left-4 p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-canvas transition-colors"
           >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="p-6">
-          {/* Demo Mode Button - Primary CTA */}
-          <button
-            type="button"
-            onClick={handleDemoLogin}
-            data-interactive
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-accent-indigo text-white font-medium text-sm hover:bg-accent-indigo-light transition-colors shadow-sm"
-          >
-            <Sparkles size={16} />
-            Continue as Analyst (Demo Mode)
+            <X size={20} />
           </button>
 
-          {/* Divider */}
-          <div className="flex items-center gap-3 my-6">
-            <div className="flex-1 h-px bg-border-default" />
-            <span className="text-xs text-text-tertiary font-medium">OR</span>
-            <div className="flex-1 h-px bg-border-default" />
-          </div>
+          <div className="mt-10 space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Username / email */}
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border-default bg-canvas focus-within:ring-2 focus-within:ring-accent-indigo focus-within:border-transparent">
+                <User size={16} className="text-text-tertiary shrink-0" aria-hidden="true" />
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Username or email"
+                  required
+                  aria-label="Username or email"
+                  className="w-full bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+                />
+              </div>
 
-          {/* STUB: Login Form - accepts any credentials for demo */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-text-primary mb-1.5">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="analyst@organization.com"
-                required
-                className="w-full px-3 py-2 rounded-lg border border-border-default bg-canvas text-text-primary text-sm placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-indigo focus:border-transparent"
-              />
+              {/* Password */}
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border-default bg-canvas focus-within:ring-2 focus-within:ring-accent-indigo focus-within:border-transparent">
+                <KeyRound size={16} className="text-text-tertiary shrink-0" aria-hidden="true" />
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  required
+                  aria-label="Password"
+                  className="w-full bg-transparent text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  data-interactive
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="shrink-0 text-text-tertiary hover:text-text-primary transition-colors"
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+
+              {/* Remember me + Login */}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="rounded border-border-default text-accent-indigo focus:ring-accent-indigo"
+                  />
+                  Remember me
+                </label>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  data-interactive
+                  className={clsx(
+                    'px-6 py-2 rounded-lg font-heading font-semibold text-xs tracking-wide text-white transition-colors',
+                    loading ? 'bg-accent-indigo/60 cursor-not-allowed' : 'bg-accent-indigo hover:bg-accent-indigo-light',
+                  )}
+                >
+                  {loading ? 'SIGNING IN…' : 'LOGIN'}
+                </button>
+              </div>
+            </form>
+
+            {/* Forgot password */}
+            <div className="text-center">
+              <button
+                type="button"
+                data-interactive
+                className="text-xs text-accent-indigo hover:underline"
+              >
+                Forgot password?
+              </button>
             </div>
 
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-text-primary mb-1.5">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                className="w-full px-3 py-2 rounded-lg border border-border-default bg-canvas text-text-primary text-sm placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-indigo focus:border-transparent"
-              />
-            </div>
-
+            {/* Demo shortcut -- kept since this app has no real backend auth */}
             <button
-              type="submit"
-              disabled={loading}
+              type="button"
+              onClick={handleDemoLogin}
               data-interactive
-              className={clsx(
-                'w-full px-4 py-2.5 rounded-lg border border-border-default font-medium text-sm transition-colors',
-                loading
-                  ? 'bg-canvas text-text-tertiary cursor-not-allowed'
-                  : 'bg-canvas text-text-primary hover:bg-surface hover:border-accent-indigo'
-              )}
+              className="w-full text-center text-[11px] text-text-tertiary hover:text-accent-indigo transition-colors"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              Continue as demo analyst
             </button>
-          </form>
 
-          {/* Disclaimer */}
-          <div className="mt-6 pt-4 border-t border-border-default">
-            <p className="text-xs text-text-tertiary text-center leading-relaxed">
+            <p className="text-[10px] text-text-tertiary text-center leading-relaxed pt-2 border-t border-border-default">
               Demo prototype — authentication is simulated for presentation purposes only.
             </p>
           </div>
         </div>
+
+        {/* Right: Animated panel */}
+        <div
+          className="relative hidden sm:block flex-1 bg-cover bg-center overflow-hidden"
+          style={{ backgroundImage: `url(${loginBackground})` }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-br from-[#0F0B2E]/80 via-[#1B1464]/60 to-[#2D1B69]/70" aria-hidden="true" />
+          <AnimatedKavachWordmark />
+        </div>
       </div>
-    </>
+    </div>,
+    document.body,
   );
 }

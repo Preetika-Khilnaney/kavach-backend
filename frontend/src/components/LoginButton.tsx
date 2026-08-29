@@ -2,13 +2,16 @@ import { useState } from 'react';
 import { LogIn, Settings, LogOut, FileText } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { LoginModal } from './LoginModal';
+import clsx from 'clsx';
 
 interface LoginButtonProps {
   onOpenAccessibility: () => void;
   onOpenProvenance: () => void;
+  /** 'lg' doubles the signed-out button's size -- used on the landing page. */
+  size?: 'default' | 'lg';
 }
 
-export function LoginButton({ onOpenAccessibility, onOpenProvenance }: LoginButtonProps) {
+export function LoginButton({ onOpenAccessibility, onOpenProvenance, size = 'default' }: LoginButtonProps) {
   const { isAuthenticated, user, logout } = useAuth();
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -21,9 +24,12 @@ export function LoginButton({ onOpenAccessibility, onOpenProvenance }: LoginButt
           onClick={() => setLoginModalOpen(true)}
           data-interactive
           aria-label="Sign in"
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border-default bg-surface hover:bg-canvas text-text-primary text-xs font-medium transition-colors"
+          className={clsx(
+            'flex items-center rounded-lg border border-border-default bg-surface hover:bg-canvas text-text-primary font-medium transition-colors',
+            size === 'lg' ? 'gap-[9px] px-[14px] py-[7px] text-[14px] rounded-[9px]' : 'gap-2 px-3 py-1.5 text-xs',
+          )}
         >
-          <LogIn size={14} />
+          <LogIn size={size === 'lg' ? 16 : 14} />
           <span className="hidden sm:inline">Sign in</span>
         </button>
         <LoginModal isOpen={loginModalOpen} onClose={() => setLoginModalOpen(false)} />

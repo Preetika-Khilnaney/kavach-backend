@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UploadCloud, FileType, CheckCircle2, ArrowRight, ShieldCheck, PlayCircle } from 'lucide-react';
+import { UploadCloud, FileType, CheckCircle2, ArrowRight, ShieldCheck, PlayCircle, Radio } from 'lucide-react';
 import { uploadFile, getJobProgress } from '../api';
+import { usePipelineStream, deriveAccumulatedNetworkGraphFromEvents } from '../api/websocket';
+import { SpacetimeGraph } from '../three/SpacetimeGraph';
 import { KillChainStepper } from '../components/KillChainStepper';
 import clsx from 'clsx';
 
@@ -25,6 +27,36 @@ export function Ingest() {
   const [isComplete, setIsComplete] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [capturePath, setCapturePath] = useState<string | null>(null);
+
+  // Real live graph state for the just-uploaded capture -- streams the
+  // same src/graph/state_builder.py-built nodes/edges the backend sends
+  // over /ws/pipeline as it actually processes this file window by window.
+  const { events: graphEvents, connected: graphConnected, replaying: graphReplaying } = usePipelineStream(capturePath);
+  const graphData = useMemo(() => deriveAccumulatedNetworkGraphFromEvents(graphEvents), [graphEvents]);
+
+  // Plain-language reading of the same real graph, for anyone who'd rather
+  // not decode a 3D scene: real host count, the real busiest host (by
+  // actual edge count), and the model's real current risk/stage output.
+  const graphSummary = useMemo(() => {
+    const hosts = graphData.nodes.filter((n) => n.type === 'host');
+    if (hosts.length === 0) return null;
+    const degree = new Map<string, number>();
+    for (const e of graphData.edges) {
+      degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+      degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+    }
+    const busiest = [...hosts].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))[0];
+    const latestMapping = [...graphEvents].reverse().find((e) => e.stage === 'attack_mapping');
+    const riskPct = Math.round((latestMapping?.payload?.infiltration_probability ?? 0) * 100);
+    const stage = latestMapping?.payload?.attack_stage ?? 'Benign';
+    return {
+      hostCount: hosts.length,
+      busiestIp: busiest?.ip ?? '—',
+      busiestDegree: degree.get(busiest?.id ?? '') ?? 0,
+      riskPct,
+      stage,
+    };
+  }, [graphData, graphEvents]);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -104,19 +136,19 @@ export function Ingest() {
   }));
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-2">
       {/* Header */}
-      <div className="text-center space-y-1 py-4">
-        <h1 className="text-2xl font-heading font-bold text-text-primary tracking-tight">
+      <div className="text-center space-y-1 pt-4">
+        <h1 className="text-3xl font-heading font-bold text-text-primary tracking-tight">
           Network Telemetry Ingestion Portal
         </h1>
-        <p className="text-xs text-text-secondary max-w-lg mx-auto">
+        <p className="text-sm text-text-secondary text-justify mt-4">
           Upload raw packet captures (.pcap, .pcapng) or NetFlow CSV datasets. The NetJEPA pipeline will extract features, form latent graph embeddings, and compute intrusion forecasts.
         </p>
       </div>
 
       {/* Upload Zone Card */}
-      <div className="bg-surface border border-border-default rounded-2xl p-8 shadow-card space-y-6">
+      <div className="bg-surface border border-border-default rounded-2xl p-10 shadow-card space-y-6">
         {!isProcessing && !isComplete && (
           <div
             onDragEnter={handleDrag}
@@ -124,7 +156,7 @@ export function Ingest() {
             onDragOver={handleDrag}
             onDrop={handleDrop}
             className={clsx(
-              'border-2 border-dashed rounded-xl p-12 text-center transition-all duration-200 cursor-pointer',
+              'border-2 border-dashed rounded-xl p-14 text-center transition-all duration-200 cursor-pointer',
               dragActive ? 'border-accent-indigo bg-accent-indigo-subtle' : 'border-border-default hover:border-accent-indigo/60 bg-canvas/40'
             )}
           >
@@ -136,18 +168,18 @@ export function Ingest() {
               onChange={handleChange}
             />
             <label htmlFor="file-upload" className="cursor-pointer space-y-3 block">
-              <div className="w-14 h-14 rounded-2xl bg-accent-indigo-subtle text-accent-indigo mx-auto flex items-center justify-center shadow-glow-indigo">
-                <UploadCloud size={28} />
+              <div className="w-16 h-16 rounded-2xl bg-accent-indigo-subtle text-accent-indigo mx-auto flex items-center justify-center shadow-glow-indigo">
+                <UploadCloud size={32} />
               </div>
               <div>
-                <span className="font-heading font-semibold text-sm text-text-primary">
+                <span className="font-heading font-semibold text-base text-text-primary">
                   Drag and drop your network capture file here, or{' '}
                 </span>
-                <span className="font-heading font-semibold text-sm text-accent-indigo underline underline-offset-2">
+                <span className="font-heading font-semibold text-base text-accent-indigo underline underline-offset-2">
                   browse files
                 </span>
               </div>
-              <p className="text-xs text-text-secondary font-mono">
+              <p className="text-sm text-text-secondary font-mono">
                 Supports PCAP, PCAPNG, Wireshark traces, or CIC-IDS / CTU CSV exports (Max 500MB)
               </p>
             </label>
@@ -156,7 +188,7 @@ export function Ingest() {
 
         {/* Demo Preset Quick-Start */}
         {!isProcessing && !isComplete && (
-          <div className="pt-2 border-t border-border-default flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          <div className="pt-2 border-t border-border-default flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
             <span className="text-text-secondary font-medium">Want to test with benchmark captures?</span>
             <button
               type="button"
@@ -165,9 +197,9 @@ export function Ingest() {
                 startIngest(dummy);
               }}
               data-interactive
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-canvas hover:bg-border-default/50 border border-border-default text-text-primary font-mono transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-canvas hover:bg-border-default/50 border border-border-default text-text-primary font-mono transition-colors"
             >
-              <PlayCircle size={14} className="text-accent-teal" />
+              <PlayCircle size={16} className="text-accent-teal" />
               <span>Load CIC-IDS-2018 Sample PCAP</span>
             </button>
           </div>
@@ -266,6 +298,49 @@ export function Ingest() {
           </div>
         )}
       </div>
+
+      {/* Live Graph State -- spacetime fabric visualization of the real
+          nodes/edges src/graph/state_builder.py builds from this capture */}
+      {capturePath && (
+        <div className="bg-surface border border-border-default rounded-2xl p-6 shadow-card space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-heading font-semibold text-sm text-text-primary">
+                Live Graph State
+              </h2>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Every real host seen across this capture so far, accumulated into one graph and rendered as nodes resting in a warped grid of latent space.
+                {graphData.nodes.length <= 1 && ' CSV captures only ever produce the aggregate "network" node — host nodes need real per-packet IPs from a PCAP upload.'}
+              </p>
+            </div>
+            <span
+              className={clsx(
+                'flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full border shrink-0',
+                graphConnected
+                  ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle'
+                  : graphReplaying
+                    ? 'text-risk-amber border-risk-amber/40 bg-risk-amber-subtle'
+                    : 'text-text-tertiary border-border-default bg-canvas'
+              )}
+              title={graphReplaying ? 'Live WebSocket unavailable — replaying a real captured run for this file' : undefined}
+            >
+              <Radio size={10} className={graphConnected ? 'animate-pulse' : ''} />
+              {graphConnected ? 'LIVE' : graphReplaying ? 'REPLAY (cached run)' : 'CONNECTING…'}
+            </span>
+          </div>
+          {graphSummary && (
+            <p className="text-xs text-text-secondary bg-canvas border border-border-default rounded-lg px-3 py-2 leading-relaxed">
+              In plain terms: <strong className="text-text-primary">{graphSummary.hostCount} real host{graphSummary.hostCount === 1 ? '' : 's'}</strong> talked
+              during this capture. The busiest was <strong className="text-text-primary font-mono">{graphSummary.busiestIp}</strong> with{' '}
+              <strong className="text-text-primary">{graphSummary.busiestDegree} connection{graphSummary.busiestDegree === 1 ? '' : 's'}</strong>.
+              Current model read: <strong className={clsx(graphSummary.riskPct >= 50 ? 'text-risk-red' : graphSummary.riskPct >= 25 ? 'text-risk-amber' : 'text-risk-green')}>
+                {graphSummary.riskPct}% infiltration probability
+              </strong>, mapped to the <strong className="text-text-primary">{graphSummary.stage}</strong> stage.
+            </p>
+          )}
+          <SpacetimeGraph nodes={graphData.nodes} edges={graphData.edges} />
+        </div>
+      )}
     </div>
   );
 }
