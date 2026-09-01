@@ -9,6 +9,10 @@ interface MonoLogLineProps {
   flowId?: string;
   className?: string;
   animate?: boolean;
+  /** Entrance delay in seconds, so a list can reveal items one after another instead of all at once. */
+  delay?: number;
+  /** Entrance animation duration in seconds. */
+  duration?: number;
   onClick?: () => void;
   children?: React.ReactNode;
 }
@@ -26,6 +30,8 @@ export function MonoLogLine({
   flowId,
   className,
   animate = false,
+  delay = 0,
+  duration = 0.3,
   onClick,
   children,
 }: MonoLogLineProps) {
@@ -37,6 +43,9 @@ export function MonoLogLine({
     minute: '2-digit',
     second: '2-digit',
   });
+  
+  // Generate accessible label
+  const ariaLabel = `${severity} alert at ${timeStr}: ${message}${flowId ? `, flow ID ${flowId.slice(0, 8)}` : ''}`;
 
   const content = (
     <div
@@ -50,11 +59,16 @@ export function MonoLogLine({
       data-interactive={onClick ? true : undefined}
       data-risk={severity === 'critical' ? 'high' : severity === 'warning' ? 'medium' : undefined}
       onClick={onClick}
+      role={onClick ? 'button' : 'article'}
+      aria-label={onClick ? ariaLabel : undefined}
     >
-      <span className={clsx('mt-1.5 w-1.5 h-1.5 rounded-full shrink-0', styles.dot)} />
+      <span 
+        className={clsx('mt-1.5 w-1.5 h-1.5 rounded-full shrink-0', styles.dot)} 
+        aria-hidden="true"
+      />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 text-xs">
-          <span className="font-mono text-text-tertiary">{timeStr}</span>
+          <time dateTime={timestamp} className="font-mono text-text-tertiary">{timeStr}</time>
           {flowId && (
             <span className="font-mono text-text-tertiary truncate text-[10px] opacity-60">
               {flowId.slice(0, 8)}
@@ -72,7 +86,7 @@ export function MonoLogLine({
       <motion.div
         initial={{ opacity: 0, x: -16, height: 0 }}
         animate={{ opacity: 1, x: 0, height: 'auto' }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ duration, delay, ease: [0.22, 1, 0.36, 1] }}
       >
         {content}
       </motion.div>

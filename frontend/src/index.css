@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&family=Dancing+Script:wght@600;700&display=swap');
 @import 'tailwindcss';
 
 /* ── Tailwind v4 Theme (Design Tokens) ────────────────────────────────────── */
@@ -35,6 +35,7 @@
   --font-heading: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-body: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --font-script: 'Dancing Script', cursive;
 
   /* ── Shadows ───────────────────────────────────────────────────── */
   --shadow-card: 0 1px 3px rgba(18, 21, 28, 0.04), 0 1px 2px rgba(18, 21, 28, 0.06);
@@ -118,6 +119,31 @@ code, pre, kbd, samp,
   outline: 2px solid var(--color-accent-indigo);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+
+/* ── Screen Reader Only utility ───────────────────────────────────────────── */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.focus\:not-sr-only:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
 }
 
 /* ── Skeleton animation ───────────────────────────────────────────────────── */
@@ -252,6 +278,30 @@ body:not(.cursor-disabled) * {
   letter-spacing: 0.05em;
 }
 
+/* ── Glow Frame (soft light tracing the rectangle's actual boundary) ──────── */
+/* Uses an SVG <rect> outline with pathLength=100 so stroke-dashoffset moves
+   the dash at constant speed along the real perimeter (incl. rounded
+   corners) -- a conic-gradient sweeps by angle from the center instead,
+   which visibly bows into a circle/ellipse on a non-square box. */
+
+.glow-frame {
+  position: relative;
+}
+
+.glow-trace {
+  stroke-dashoffset: 0;
+  animation: glow-trace-move 7s linear infinite;
+}
+
+.glow-trace-blur {
+  filter: blur(5px);
+  opacity: 0.7;
+}
+
+@keyframes glow-trace-move {
+  to { stroke-dashoffset: -100; }
+}
+
 /* ── Toast ────────────────────────────────────────────────────────────────── */
 
 .toast {
@@ -272,4 +322,73 @@ body:not(.cursor-disabled) * {
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Accessibility: Text Size Scaling ─────────────────────────────────────── */
+
+html.text-small {
+  font-size: 12px;
+}
+
+html.text-large {
+  font-size: 16px;
+}
+
+/* ── Accessibility: High Contrast Mode ────────────────────────────────────── */
+
+html.high-contrast {
+  --color-canvas: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-border-default: #000000;
+  --color-text-primary: #000000;
+  --color-text-secondary: #1A1A1A;
+  --color-text-tertiary: #333333;
+  
+  --color-accent-indigo: #0000CC;
+  --color-accent-indigo-light: #0000FF;
+  --color-accent-indigo-subtle: #E6E6FF;
+  --color-accent-teal: #006B66;
+  --color-accent-teal-light: #00A39E;
+  --color-accent-teal-subtle: #E6F7F6;
+  
+  --color-risk-green: #006600;
+  --color-risk-green-light: #009900;
+  --color-risk-green-subtle: #E6F7E6;
+  --color-risk-amber: #CC6600;
+  --color-risk-amber-light: #FF8800;
+  --color-risk-amber-subtle: #FFF4E6;
+  --color-risk-red: #CC0000;
+  --color-risk-red-light: #FF0000;
+  --color-risk-red-subtle: #FFE6E6;
+
+  --shadow-card: 0 0 0 1px #000000;
+  --shadow-card-hover: 0 0 0 2px #000000;
+  --shadow-panel: 0 0 0 2px #000000;
+}
+
+html.high-contrast :focus-visible {
+  outline: 3px solid #000000;
+  outline-offset: 3px;
+}
+
+/* ── Accessibility: Reduce Motion ─────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }

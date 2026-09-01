@@ -17,7 +17,7 @@ export function InternalsPipeline() {
   // Real: streams stage:* events off the backend WebSocket as it actually
   // processes `capturePath` (or the placeholder demo stream if none was
   // passed) -- see src/api/websocket.ts. Not mocked.
-  const { events, connected, closed, error: wsError } = usePipelineStream(capturePath);
+  const { events, connected, closed, error: wsError, replaying } = usePipelineStream(capturePath);
   const stages = useMemo(() => deriveStagesFromEvents(events), [events]);
   const loading = events.length === 0 && !closed && !wsError;
   const error = wsError;
@@ -52,11 +52,16 @@ export function InternalsPipeline() {
             <span
               className={clsx(
                 'flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full border',
-                connected ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle' : 'text-text-tertiary border-border-default bg-canvas'
+                connected
+                  ? 'text-risk-green border-risk-green/40 bg-risk-green-subtle'
+                  : replaying
+                    ? 'text-risk-amber border-risk-amber/40 bg-risk-amber-subtle'
+                    : 'text-text-tertiary border-border-default bg-canvas'
               )}
+              title={replaying ? 'Live WebSocket unavailable — replaying a real captured run for this file' : undefined}
             >
               <Radio size={10} className={connected ? 'animate-pulse' : ''} />
-              {connected ? 'LIVE STREAM' : closed ? 'STREAM CLOSED' : 'CONNECTING…'}
+              {connected ? 'LIVE STREAM' : replaying ? 'REPLAY (cached run)' : closed ? 'STREAM CLOSED' : 'CONNECTING…'}
             </span>
           </div>
           <p className="text-xs text-text-secondary mt-0.5">
@@ -168,13 +173,18 @@ export function InternalsPipeline() {
       {/* Bottom Process Narration Log (Explainability Principle: No Black Box) */}
       <div className="bg-surface border border-border-default rounded-2xl p-6 shadow-card space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border-default">
-          <Terminal size={16} className="text-accent-teal" />
+          <Terminal size={16} className="text-accent-teal" aria-hidden="true" />
           <h3 className="font-heading font-semibold text-sm text-text-primary">
             Plain-Language Process Narration Log
           </h3>
         </div>
 
-        <div className="space-y-2.5 font-mono text-xs max-h-60 overflow-y-auto pr-1">
+        <div 
+          className="space-y-2.5 font-mono text-xs max-h-60 overflow-y-auto pr-1"
+          role="log"
+          aria-live="polite"
+          aria-label="Pipeline process narration"
+        >
           {stages?.map((stage, idx) => (
             <MonoLogLine
               key={idx}
